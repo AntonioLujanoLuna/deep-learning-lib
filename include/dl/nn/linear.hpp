@@ -3,8 +3,11 @@
 #include "../tensor.hpp"
 #include "../ops/matrix_ops.hpp"
 #include "../autograd.hpp"
+#include "../optim/optimizer.hpp"
 #include <random>
 #include <memory>
+#include <iostream>
+#include <vector>
 
 namespace dl {
 namespace nn {
@@ -21,6 +24,16 @@ public:
         const size_t in_features = input_.shape()[1];
         const size_t out_features = weights_.shape()[1];
 
+        std::cout << "Linear backward - Input shape: [" << batch_size << " " << in_features << "]" << std::endl;
+        std::cout << "Weights shape: [" << weights_.shape()[0] << " " << weights_.shape()[1] << "]" << std::endl;
+        std::cout << "Output grad shape: [" << output_.shape()[0] << " " << output_.shape()[1] << "]" << std::endl;
+        
+        std::cout << "First few output grads: ";
+        for (size_t i = 0; i < std::min(size_t(3), output_grad.size()); ++i) {
+            std::cout << output_grad[i] << " ";
+        }
+        std::cout << std::endl;
+
         // Compute gradients for weights if needed
         if (weights_.requires_grad()) {
             auto& weights_grad = const_cast<Tensor<T>&>(weights_).grad();
@@ -36,6 +49,12 @@ public:
                     weights_grad[i * out_features + j] += sum;
                 }
             }
+
+            std::cout << "First few weight grads: ";
+            for (size_t i = 0; i < std::min(size_t(3), weights_grad.size()); ++i) {
+                std::cout << weights_grad[i] << " ";
+            }
+            std::cout << std::endl;
         }
 
         // Compute gradients for bias if needed
@@ -50,6 +69,12 @@ public:
                 }
                 bias_grad[j] += sum;
             }
+
+            std::cout << "First few bias grads: ";
+            for (size_t i = 0; i < std::min(size_t(3), bias_grad.size()); ++i) {
+                std::cout << bias_grad[i] << " ";
+            }
+            std::cout << std::endl;
         }
 
         // Compute gradients for input if needed
@@ -67,14 +92,20 @@ public:
                     input_grad[b * in_features + i] += sum;
                 }
             }
+
+            std::cout << "First few input grads: ";
+            for (size_t i = 0; i < std::min(size_t(3), input_grad.size()); ++i) {
+                std::cout << input_grad[i] << " ";
+            }
+            std::cout << std::endl;
         }
     }
 
 private:
-    Tensor<T> input_;
-    Tensor<T> weights_;
-    Tensor<T> bias_;
-    Tensor<T> output_;
+    const Tensor<T>& input_;
+    const Tensor<T>& weights_;
+    const Tensor<T>& bias_;
+    Tensor<T>& output_;
 };
 
 template<typename T>
@@ -105,7 +136,7 @@ public:
         weights_.set_requires_grad(true);
         bias_.set_requires_grad(true);
     }
-    
+
     Tensor<T> forward(const Tensor<T>& input) {
         // Check input dimensions
         if (input.shape().size() != 2 || input.shape()[1] != in_features_) {
@@ -114,6 +145,7 @@ public:
         
         // y = xW + b
         auto output = ops::matmul(input, weights_);
+        output.set_requires_grad(true);
         
         // Add bias to each row
         for (size_t i = 0; i < output.shape()[0]; ++i) {
@@ -128,13 +160,23 @@ public:
         
         return output;
     }
-    
+
     const Tensor<T>& weights() const { return weights_; }
     Tensor<T>& weights() { return weights_; }
-    
     const Tensor<T>& bias() const { return bias_; }
     Tensor<T>& bias() { return bias_; }
-    
+
+    // Get all parameters for optimization
+    std::vector<std::reference_wrapper<Tensor<T>>> parameters() {
+        return {weights_, bias_};
+    }
+
+    // Add all parameters to optimizer
+    void add_parameters_to_optimizer(optim::SGD<T>& optimizer) {
+        optimizer.add_parameter(weights_);
+        optimizer.add_parameter(bias_);
+    }
+
 private:
     size_t in_features_;
     size_t out_features_;

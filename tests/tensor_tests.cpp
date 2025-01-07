@@ -57,7 +57,9 @@ TEST_CASE("Tensor arithmetic operations") {
         a.zero_grad();
         b.zero_grad();
         auto c = a + b;
-        c.backward();
+        c.grad()[0] = 1.0f;  // Set initial gradient
+        dl::ComputationGraph::getInstance().backward();
+        dl::ComputationGraph::getInstance().clear();
         
         // Gradients should flow equally to both inputs
         CHECK_EQ(a.grad()[0], 1.0f);
@@ -68,11 +70,43 @@ TEST_CASE("Tensor arithmetic operations") {
         a.zero_grad();
         b.zero_grad();
         auto c = a * b;
-        c.backward();
+        c.grad()[0] = 1.0f;  // Set initial gradient
+        dl::ComputationGraph::getInstance().backward();
+        dl::ComputationGraph::getInstance().clear();
         
         // Gradient of a*b with respect to a is b
         CHECK_EQ(a.grad()[0], b.data()[0]);
         // Gradient of a*b with respect to b is a
         CHECK_EQ(b.grad()[0], a.data()[0]);
     }
+}
+
+TEST_CASE("Tensor backward pass") {
+    dl::Tensor<float> x({1});
+    x.data()[0] = 2.0f;
+    x.set_requires_grad(true);
+
+    dl::Tensor<float> y = x * x;  // y = x^2
+    y.set_requires_grad(true);
+    y.grad()[0] = 1.0f;  // Set initial gradient
+
+    dl::ComputationGraph::getInstance().backward();
+    dl::ComputationGraph::getInstance().clear();
+
+    CHECK(x.grad()[0] == doctest::Approx(4.0f));  // dy/dx = 2x = 4
+}
+
+TEST_CASE("Tensor backward pass with multiple operations") {
+    dl::Tensor<float> x({1});
+    x.data()[0] = 2.0f;
+    x.set_requires_grad(true);
+
+    dl::Tensor<float> y = x * x + x;  // y = x^2 + x
+    y.set_requires_grad(true);
+    y.grad()[0] = 1.0f;  // Set initial gradient
+
+    dl::ComputationGraph::getInstance().backward();
+    dl::ComputationGraph::getInstance().clear();
+
+    CHECK(x.grad()[0] == doctest::Approx(5.0f));  // dy/dx = 2x + 1 = 5
 }

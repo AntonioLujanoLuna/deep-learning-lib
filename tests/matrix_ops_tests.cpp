@@ -46,57 +46,33 @@ TEST_CASE("Matrix operations") {
         CHECK_EQ(c_data[3], 64.0f);
     }
 
-    SUBCASE("Matrix multiplication gradient") {
-        // Enable gradients
+    SUBCASE("Matrix multiplication backward") {
+        // Initialize matrices
+        a.data() = {1, 2, 3, 4, 5, 6};
+        b.data() = {1, 2, 3, 4, 5, 6};
+        
         a.set_requires_grad(true);
         b.set_requires_grad(true);
         
-        // Initialize matrices
-        auto& a_data = a.data();
-        auto& b_data = b.data();
-        
-        // Matrix A:
-        // 1 2 3
-        // 4 5 6
-        a_data[0] = 1.0f; a_data[1] = 2.0f; a_data[2] = 3.0f;
-        a_data[3] = 4.0f; a_data[4] = 5.0f; a_data[5] = 6.0f;
-        
-        // Matrix B:
-        // 1 2
-        // 3 4
-        // 5 6
-        b_data[0] = 1.0f; b_data[1] = 2.0f;
-        b_data[2] = 3.0f; b_data[3] = 4.0f;
-        b_data[4] = 5.0f; b_data[5] = 6.0f;
-
-        // Zero gradients before forward pass
-        a.zero_grad();
-        b.zero_grad();
-
         auto c = dl::ops::matmul(a, b);
-        c.backward();
-
+        c.set_requires_grad(true);
+        
+        // Set gradient of output
+        c.grad() = {1, 1, 1, 1};
+        
+        // Backward pass
+        dl::ComputationGraph::getInstance().backward();
+        dl::ComputationGraph::getInstance().clear();
+        
         // Check gradients
-        const auto& a_grad = a.grad();
-        const auto& b_grad = b.grad();
-
-        // Verify gradients are non-zero
-        bool has_nonzero_grad = false;
-        for (const auto& g : a_grad) {
-            if (g != 0.0f) {
-                has_nonzero_grad = true;
-                break;
-            }
+        std::vector<float> expected_a_grad = {3, 7, 11, 3, 7, 11};
+        std::vector<float> expected_b_grad = {5, 5, 7, 7, 9, 9};
+        
+        for (size_t i = 0; i < a.grad().size(); ++i) {
+            CHECK(a.grad()[i] == doctest::Approx(expected_a_grad[i]));
         }
-        CHECK(has_nonzero_grad);
-
-        has_nonzero_grad = false;
-        for (const auto& g : b_grad) {
-            if (g != 0.0f) {
-                has_nonzero_grad = true;
-                break;
-            }
+        for (size_t i = 0; i < b.grad().size(); ++i) {
+            CHECK(b.grad()[i] == doctest::Approx(expected_b_grad[i]));
         }
-        CHECK(has_nonzero_grad);
     }
 }

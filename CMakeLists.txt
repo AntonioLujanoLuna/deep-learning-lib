@@ -19,6 +19,7 @@ FetchContent_MakeAvailable(doctest)
 # Add subdirectories
 add_subdirectory(src)
 add_subdirectory(tests)
+add_subdirectory(examples)
 
 # Set compiler flags
 if(MSVC)

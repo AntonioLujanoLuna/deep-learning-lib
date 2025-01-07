@@ -36,7 +36,8 @@ TEST_CASE("Linear layer operations") {
         
         auto loss = dl::ops::mse_loss(output, target);
         
-        loss.backward();
+        dl::ComputationGraph::getInstance().backward();
+        dl::ComputationGraph::getInstance().clear();
         
         // Check that gradients are computed
         const auto& weight_grad = layer.weights().grad();
@@ -59,5 +60,50 @@ TEST_CASE("Linear layer operations") {
             }
         }
         CHECK(has_bias_grad);
+    }
+}
+
+TEST_CASE("Linear layer backward pass") {
+    dl::nn::Linear<float> layer(2, 3);  // 2 inputs, 3 outputs
+    
+    // Set weights and bias for testing
+    auto& weights = layer.weights().data();
+    weights = {0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f};  // 2x3 matrix
+    
+    auto& bias = layer.bias().data();
+    bias = {0.1f, 0.2f, 0.3f};  // 3 elements
+    
+    // Create input tensor
+    dl::Tensor<float> input({1, 2});
+    input.data() = {1.0f, 2.0f};
+    input.set_requires_grad(true);
+    
+    // Forward pass
+    auto output = layer.forward(input);
+    output.set_requires_grad(true);
+    
+    // Set output gradient
+    output.grad() = {1.0f, 1.0f, 1.0f};
+    
+    // Backward pass
+    dl::ComputationGraph::getInstance().backward();
+    dl::ComputationGraph::getInstance().clear();
+    
+    // Check input gradients
+    std::vector<float> expected_input_grad = {0.6f, 1.5f};  // dot product with weights
+    for (size_t i = 0; i < input.grad().size(); ++i) {
+        CHECK(input.grad()[i] == doctest::Approx(expected_input_grad[i]));
+    }
+    
+    // Check weight gradients
+    std::vector<float> expected_weight_grad = {1.0f, 1.0f, 1.0f, 2.0f, 2.0f, 2.0f};
+    for (size_t i = 0; i < layer.weights().grad().size(); ++i) {
+        CHECK(layer.weights().grad()[i] == doctest::Approx(expected_weight_grad[i]));
+    }
+    
+    // Check bias gradients
+    std::vector<float> expected_bias_grad = {1.0f, 1.0f, 1.0f};
+    for (size_t i = 0; i < layer.bias().grad().size(); ++i) {
+        CHECK(layer.bias().grad()[i] == doctest::Approx(expected_bias_grad[i]));
     }
 }

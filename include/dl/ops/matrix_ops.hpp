@@ -3,6 +3,7 @@
 #include "../tensor.hpp"
 #include "../autograd.hpp"
 #include <stdexcept>
+#include <memory>
 
 namespace dl {
 namespace ops {
@@ -10,98 +11,90 @@ namespace ops {
 template<typename T>
 class MatMulNode : public Node {
 public:
-    MatMulNode(const Tensor<T>& a, const Tensor<T>& b, Tensor<T>& result)
-        : a_(a), b_(b), result_(result) {
-        if (a.shape().size() != 2 || b.shape().size() != 2) {
-            throw std::runtime_error("MatMul requires 2D tensors");
-        }
-        if (a.shape()[1] != b.shape()[0]) {
-            throw std::runtime_error("Matrix dimensions don't match for multiplication");
-        }
-    }
+    MatMulNode(const Tensor<T>& a, const Tensor<T>& b, Tensor<T>& output)
+        : a_(a), b_(b), output_(output) {}
 
     void backward() override {
-        const size_t M = a_.shape()[0];
-        const size_t K = a_.shape()[1];
-        const size_t N = b_.shape()[1];
+        const auto& output_grad = output_.grad();
+        const size_t m = a_.shape()[0];
+        const size_t k = a_.shape()[1];
+        const size_t n = b_.shape()[1];
 
+        // Compute gradient for a if needed
         if (a_.requires_grad()) {
             auto& a_grad = const_cast<Tensor<T>&>(a_).grad();
-            const auto& result_grad = result_.grad();
             const auto& b_data = b_.data();
 
-            // dC/dA = dC/dY * B^T
-            for (size_t i = 0; i < M; ++i) {
-                for (size_t k = 0; k < K; ++k) {
+            // dL/dA = dL/dY * B^T
+            for (size_t i = 0; i < m; ++i) {
+                for (size_t j = 0; j < k; ++j) {
                     T sum = T(0);
-                    for (size_t j = 0; j < N; ++j) {
-                        sum += result_grad[i * N + j] * b_data[k * N + j];
+                    for (size_t l = 0; l < n; ++l) {
+                        sum += output_grad[i * n + l] * b_data[j * n + l];
                     }
-                    a_grad[i * K + k] += sum;
+                    a_grad[i * k + j] += sum;
                 }
             }
         }
 
+        // Compute gradient for b if needed
         if (b_.requires_grad()) {
             auto& b_grad = const_cast<Tensor<T>&>(b_).grad();
-            const auto& result_grad = result_.grad();
             const auto& a_data = a_.data();
 
-            // dC/dB = A^T * dC/dY
-            for (size_t k = 0; k < K; ++k) {
-                for (size_t j = 0; j < N; ++j) {
+            // dL/dB = A^T * dL/dY
+            for (size_t i = 0; i < k; ++i) {
+                for (size_t j = 0; j < n; ++j) {
                     T sum = T(0);
-                    for (size_t i = 0; i < M; ++i) {
-                        sum += a_data[i * K + k] * result_grad[i * N + j];
+                    for (size_t l = 0; l < m; ++l) {
+                        sum += a_data[l * k + i] * output_grad[l * n + j];
                     }
-                    b_grad[k * N + j] += sum;
+                    b_grad[i * n + j] += sum;
                 }
             }
         }
     }
 
 private:
-    Tensor<T> a_;  // Store by value to keep tensors alive
-    Tensor<T> b_;
-    Tensor<T> result_;
+    const Tensor<T>& a_;
+    const Tensor<T>& b_;
+    Tensor<T>& output_;
 };
 
 template<typename T>
 Tensor<T> matmul(const Tensor<T>& a, const Tensor<T>& b) {
-    if (a.shape().size() != 2 || b.shape().size() != 2) {
-        throw std::runtime_error("MatMul requires 2D tensors");
-    }
-    if (a.shape()[1] != b.shape()[0]) {
-        throw std::runtime_error("Matrix dimensions don't match for multiplication");
+    // Check dimensions
+    if (a.shape().size() != 2 || b.shape().size() != 2 || a.shape()[1] != b.shape()[0]) {
+        throw std::runtime_error("Invalid shapes for matrix multiplication");
     }
 
-    const size_t M = a.shape()[0];
-    const size_t K = a.shape()[1];
-    const size_t N = b.shape()[1];
+    const size_t m = a.shape()[0];
+    const size_t k = a.shape()[1];
+    const size_t n = b.shape()[1];
 
-    Tensor<T> result({M, N});
-    auto& result_data = result.data();
+    Tensor<T> output({m, n});
+    auto& output_data = output.data();
     const auto& a_data = a.data();
     const auto& b_data = b.data();
 
-    for (size_t i = 0; i < M; ++i) {
-        for (size_t j = 0; j < N; ++j) {
+    // Compute matrix multiplication
+    for (size_t i = 0; i < m; ++i) {
+        for (size_t j = 0; j < n; ++j) {
             T sum = T(0);
-            for (size_t k = 0; k < K; ++k) {
-                sum += a_data[i * K + k] * b_data[k * N + j];
+            for (size_t l = 0; l < k; ++l) {
+                sum += a_data[i * k + l] * b_data[l * n + j];
             }
-            result_data[i * N + j] = sum;
+            output_data[i * n + j] = sum;
         }
     }
 
-    // Set requires_grad if either input requires grad
     if (a.requires_grad() || b.requires_grad()) {
-        result.set_requires_grad(true);
-        auto node = std::make_shared<MatMulNode<T>>(a, b, result);
+        output.set_requires_grad(true);
+        auto node = std::make_shared<MatMulNode<T>>(a, b, output);
         ComputationGraph::getInstance().addNode(node);
     }
 
-    return result;
+    return output;
 }
 
 template<typename T>

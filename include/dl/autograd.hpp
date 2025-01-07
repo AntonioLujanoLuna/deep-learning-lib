@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <vector>
+#include <iostream>
 
 namespace dl {
 
@@ -23,16 +24,35 @@ public:
     }
 
     void backward() {
-        // Traverse nodes in reverse order for backward pass
+        if (nodes_.empty()) {
+            std::cout << "Warning: No nodes in computation graph during backward pass" << std::endl;
+            return;
+        }
+
+        std::cout << "Starting backward pass with " << nodes_.size() << " nodes" << std::endl;
+        
+        // Execute backward pass in reverse order
         for (auto it = nodes_.rbegin(); it != nodes_.rend(); ++it) {
-            if (*it) {
+            try {
                 (*it)->backward();
+            } catch (const std::exception& e) {
+                std::cout << "Error in backward pass: " << e.what() << std::endl;
+                throw;
             }
         }
+        
+        std::cout << "Finished backward pass" << std::endl;
     }
 
     void clear() {
-        nodes_.clear();
+        if (!nodes_.empty()) {
+            std::cout << "Clearing computation graph with " << nodes_.size() << " nodes" << std::endl;
+            nodes_.clear();
+        }
+    }
+
+    const std::vector<std::shared_ptr<Node>>& getNodes() const {
+        return nodes_;
     }
 
 private:
