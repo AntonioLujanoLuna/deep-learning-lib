@@ -19,14 +19,22 @@ public:
         : input_(input), weights_(weights), bias_(bias), output_(output) {}
 
     void backward() override {
+        std::cout << "\n=== Starting Linear backward ===" << std::endl;
         const auto& output_grad = output_.grad();
         const size_t batch_size = input_.shape()[0];
         const size_t in_features = input_.shape()[1];
         const size_t out_features = weights_.shape()[1];
 
-        std::cout << "Linear backward - Input shape: [" << batch_size << " " << in_features << "]" << std::endl;
-        std::cout << "Weights shape: [" << weights_.shape()[0] << " " << weights_.shape()[1] << "]" << std::endl;
-        std::cout << "Output grad shape: [" << output_.shape()[0] << " " << output_.shape()[1] << "]" << std::endl;
+        std::cout << "Linear backward - Input shape: [" << batch_size << ", " << in_features << "]" << std::endl;
+        std::cout << "Weights shape: [" << weights_.shape()[0] << ", " << weights_.shape()[1] << "]" << std::endl;
+        std::cout << "Output grad shape: [" << output_.shape()[0] << ", " << output_.shape()[1] << "]" << std::endl;
+        
+        // Validate output gradient
+        if (output_grad.empty() || output_grad.size() != batch_size * out_features) {
+            std::cout << "Invalid output gradient. Size: " << output_grad.size() 
+                      << ", Expected: " << (batch_size * out_features) << std::endl;
+            return;
+        }
         
         std::cout << "First few output grads: ";
         for (size_t i = 0; i < std::min(size_t(3), output_grad.size()); ++i) {
@@ -38,6 +46,13 @@ public:
         if (weights_.requires_grad()) {
             auto& weights_grad = const_cast<Tensor<T>&>(weights_).grad();
             const auto& input_data = input_.data();
+            
+            // Validate gradient size
+            if (weights_grad.size() != in_features * out_features) {
+                std::cout << "Resizing weights gradient from " << weights_grad.size() 
+                          << " to " << (in_features * out_features) << std::endl;
+                weights_grad.resize(in_features * out_features, T(0));
+            }
 
             // dL/dW = X^T * dL/dY
             for (size_t i = 0; i < in_features; ++i) {
@@ -60,6 +75,13 @@ public:
         // Compute gradients for bias if needed
         if (bias_.requires_grad()) {
             auto& bias_grad = const_cast<Tensor<T>&>(bias_).grad();
+            
+            // Validate gradient size
+            if (bias_grad.size() != out_features) {
+                std::cout << "Resizing bias gradient from " << bias_grad.size() 
+                          << " to " << out_features << std::endl;
+                bias_grad.resize(out_features, T(0));
+            }
 
             // dL/db = sum(dL/dY, dim=0)
             for (size_t j = 0; j < out_features; ++j) {
@@ -81,6 +103,13 @@ public:
         if (input_.requires_grad()) {
             auto& input_grad = const_cast<Tensor<T>&>(input_).grad();
             const auto& weights_data = weights_.data();
+            
+            // Validate gradient size
+            if (input_grad.size() != batch_size * in_features) {
+                std::cout << "Resizing input gradient from " << input_grad.size() 
+                          << " to " << (batch_size * in_features) << std::endl;
+                input_grad.resize(batch_size * in_features, T(0));
+            }
 
             // dL/dX = dL/dY * W^T
             for (size_t b = 0; b < batch_size; ++b) {
@@ -99,6 +128,12 @@ public:
             }
             std::cout << std::endl;
         }
+        
+        std::cout << "=== Linear backward completed ===" << std::endl;
+    }
+
+    std::string node_type() const override {
+        return "Linear";
     }
 
 private:
@@ -138,27 +173,51 @@ public:
     }
 
     Tensor<T> forward(const Tensor<T>& input) {
+        std::cout << "\n=== Starting Linear forward ===" << std::endl;
+        std::cout << "Input requires_grad: " << std::boolalpha << input.requires_grad() << std::endl;
+        std::cout << "Weights requires_grad: " << weights_.requires_grad() << std::endl;
+        std::cout << "Bias requires_grad: " << bias_.requires_grad() << std::endl;
+        
         // Check input dimensions
         if (input.shape().size() != 2 || input.shape()[1] != in_features_) {
-            throw std::runtime_error("Invalid input shape for linear layer");
+            throw std::runtime_error("Invalid input shape for linear layer. Expected [N, " + 
+                std::to_string(in_features_) + "], got " + utils::shape_to_string(input.shape()));
         }
         
+        // Create output tensor with proper shape
+        std::vector<size_t> output_shape = {input.shape()[0], out_features_};
+        std::shared_ptr<Tensor<T>> output = std::make_shared<Tensor<T>>(output_shape);
+        output->set_requires_grad(true);
+        
+        // Store tensors in computation graph
+        auto& graph = ComputationGraph::getInstance();
+        graph.storeTensor(input);
+        graph.storeTensor(weights_);
+        graph.storeTensor(bias_);
+        graph.storeTensorPtr(output);
+        
         // y = xW + b
-        auto output = ops::matmul(input, weights_);
-        output.set_requires_grad(true);
+        *output = ops::matmul(input, weights_);
         
         // Add bias to each row
-        for (size_t i = 0; i < output.shape()[0]; ++i) {
-            for (size_t j = 0; j < output.shape()[1]; ++j) {
-                output.data()[i * output.shape()[1] + j] += bias_.data()[j];
+        const auto& bias_data = bias_.data();
+        auto& output_data = output->data();
+        const size_t batch_size = input.shape()[0];
+        
+        for (size_t i = 0; i < batch_size; ++i) {
+            for (size_t j = 0; j < out_features_; ++j) {
+                output_data[i * out_features_ + j] += bias_data[j];
             }
         }
 
         // Create node for backward pass
-        auto node = std::make_shared<LinearNode<T>>(input, weights_, bias_, output);
-        ComputationGraph::getInstance().addNode(node);
+        auto node = std::make_shared<LinearNode<T>>(input, weights_, bias_, *output);
+        graph.addNode(node);
         
-        return output;
+        std::cout << "Output shape: " << utils::shape_to_string(output->shape()) << std::endl;
+        std::cout << "Output requires_grad: " << output->requires_grad() << std::endl;
+        std::cout << "=== Linear forward completed ===" << std::endl;
+        return *output;
     }
 
     const Tensor<T>& weights() const { return weights_; }

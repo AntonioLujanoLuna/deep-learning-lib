@@ -25,8 +25,13 @@ public:
     }
 
     dl::Tensor<float>& forward(const dl::Tensor<float>& x) {
+        std::cout << "\n=== Starting MLP forward pass ===" << std::endl;
+        std::cout << "Input requires_grad: " << std::boolalpha << x.requires_grad() << std::endl;
+        
         // First layer
         h1_ = layer1.forward(x);
+        h1_.set_requires_grad(true);
+        std::cout << "Layer1 output requires_grad: " << h1_.requires_grad() << std::endl;
         
         if (dl::ComputationGraph::getInstance().getNodes().empty()) {
             std::cout << "Warning: No nodes in computation graph after layer1" << std::endl;
@@ -34,6 +39,8 @@ public:
         
         // ReLU activation
         h1_act_ = dl::ops::relu(h1_);
+        h1_act_.set_requires_grad(true);
+        std::cout << "ReLU output requires_grad: " << h1_act_.requires_grad() << std::endl;
         
         if (dl::ComputationGraph::getInstance().getNodes().size() < 2) {
             std::cout << "Warning: Missing ReLU node in computation graph" << std::endl;
@@ -41,6 +48,8 @@ public:
         
         // Second layer
         out_ = layer2.forward(h1_act_);
+        out_.set_requires_grad(true);
+        std::cout << "Layer2 output requires_grad: " << out_.requires_grad() << std::endl;
         
         if (dl::ComputationGraph::getInstance().getNodes().size() < 3) {
             std::cout << "Warning: Missing layer2 node in computation graph" << std::endl;
@@ -48,11 +57,14 @@ public:
         
         // Sigmoid activation
         final_ = dl::ops::sigmoid(out_);
+        final_.set_requires_grad(true);
+        std::cout << "Final output requires_grad: " << final_.requires_grad() << std::endl;
         
         if (dl::ComputationGraph::getInstance().getNodes().size() < 4) {
             std::cout << "Warning: Missing sigmoid node in computation graph" << std::endl;
         }
         
+        std::cout << "=== MLP forward pass completed ===" << std::endl;
         return final_;
     }
 
@@ -95,27 +107,24 @@ private:
 // Generate a simple XOR-like dataset
 void generate_data(std::vector<dl::Tensor<float>>& inputs, 
                   std::vector<dl::Tensor<float>>& targets, 
-                  size_t n_samples) 
-{
+                  size_t n_samples) {
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::uniform_real_distribution<float> dis(-1.0f, 1.0f);
-    
-    inputs.clear();
-    targets.clear();
+    std::uniform_real_distribution<float> dist(0.0f, 1.0f);
     
     for (size_t i = 0; i < n_samples; ++i) {
-        float x1 = dis(gen);
-        float x2 = dis(gen);
-        
+        // Generate random input in [0,1] x [0,1]
         dl::Tensor<float> input({1, 2});
-        input.data()[0] = x1;
-        input.data()[1] = x2;
-        input.set_requires_grad(true);
-        inputs.push_back(input);
+        input.set_requires_grad(true);  // Set requires_grad for input tensor
+        input.data()[0] = dist(gen);
+        input.data()[1] = dist(gen);
         
+        // Target is 1 if points are in opposite quadrants (XOR-like)
         dl::Tensor<float> target({1, 1});
-        target.data()[0] = (x1 * x2 > 0) ? 1.0f : 0.0f;  // XOR-like pattern
+        target.set_requires_grad(false);  // Target should not require gradients
+        target.data()[0] = (input.data()[0] > 0.5f) != (input.data()[1] > 0.5f) ? 1.0f : 0.0f;
+        
+        inputs.push_back(input);
         targets.push_back(target);
     }
 }
@@ -147,6 +156,12 @@ int main() {
             
             // Forward pass
             dl::Tensor<float>& pred = model.forward(inputs[i]);
+            
+            // Ensure prediction requires gradients
+            if (!pred.requires_grad()) {
+                pred.set_requires_grad(true);
+            }
+            
             dl::Tensor<float> loss = dl::ops::binary_cross_entropy(pred, targets[i]);
             
             if (epoch == 0 && i == 0) {
@@ -156,6 +171,8 @@ int main() {
                 std::cout << "Loss: " << loss.data()[0] << std::endl;
                 std::cout << "Loss gradient: " << loss.grad()[0] << std::endl;
                 std::cout << "Computation graph size: " << dl::ComputationGraph::getInstance().getNodes().size() << std::endl;
+                
+                // Print gradient states
                 std::cout << "Gradients before backward:" << std::endl;
                 model.print_gradients();
             }

@@ -2,27 +2,17 @@
 
 #include <vector>
 #include <memory>
-#include <cmath>
+#include <stdexcept>
 #include <iostream>
-#include <iomanip>
+#include <numeric>
 #include <sstream>
-#include "dl/tensor.hpp"
-#include "dl/autograd.hpp"
+#include <iomanip>
+#include "../tensor.hpp"
+#include "../autograd.hpp"
+#include "../utils.hpp"
 
 namespace dl {
 namespace ops {
-
-// Non-template version of shape_to_string
-inline std::string shape_to_string(const std::vector<size_t>& shape) {
-    std::stringstream ss;
-    ss << "[";
-    for (size_t i = 0; i < shape.size(); ++i) {
-        if (i > 0) ss << ", ";
-        ss << shape[i];
-    }
-    ss << "]";
-    return ss.str();
-}
 
 template<typename T>
 class BCELossNode : public Node {
@@ -36,147 +26,158 @@ public:
         , output_shape_(output.shape())
         , predicted_size_(std::accumulate(predicted_shape_.begin(), predicted_shape_.end(), size_t(1), std::multiplies<size_t>()))
         , target_size_(std::accumulate(target_shape_.begin(), target_shape_.end(), size_t(1), std::multiplies<size_t>()))
-        , output_size_(std::accumulate(output_shape_.begin(), output_shape_.end(), size_t(1), std::multiplies<size_t>())) {
+        , output_size_(std::accumulate(output_shape_.begin(), output_shape_.end(), size_t(1), std::multiplies<size_t>()))
+        , predicted_tensor_(predicted)
+        , target_tensor_(target)
+        , output_tensor_(output) {
         
-        std::cout << "BCELossNode constructor:" << std::endl;
-        std::cout << "  Predicted shape: " << shape_to_string(predicted_shape_) << std::endl;
-        std::cout << "  Target shape: " << shape_to_string(target_shape_) << std::endl;
-        std::cout << "  Output shape: " << shape_to_string(output_shape_) << std::endl;
-        std::cout << "  Predicted requires grad: " << std::boolalpha << predicted_.requires_grad() << std::endl;
-        std::cout << "  Predicted grad size: " << predicted_.grad().size() << std::endl;
+        std::cout << "\nBCELossNode constructor:" << std::endl;
+        std::cout << "  Predicted tensor:" << std::endl;
+        std::cout << "    Shape: " << utils::shape_to_string(predicted_shape_) << std::endl;
+        std::cout << "    Requires grad: " << std::boolalpha << predicted_.requires_grad() << std::endl;
+        std::cout << "    Data size: " << predicted_.data().size() << std::endl;
+        std::cout << "    Grad size: " << predicted_.grad().size() << std::endl;
+        
+        std::cout << "  Target tensor:" << std::endl;
+        std::cout << "    Shape: " << utils::shape_to_string(target_shape_) << std::endl;
+        std::cout << "    Data size: " << target_.data().size() << std::endl;
+        
+        std::cout << "  Output tensor:" << std::endl;
+        std::cout << "    Shape: " << utils::shape_to_string(output_shape_) << std::endl;
+        std::cout << "    Requires grad: " << output_.requires_grad() << std::endl;
+        std::cout << "    Data size: " << output_.data().size() << std::endl;
+        std::cout << "    Grad size: " << output_.grad().size() << std::endl;
+        
+        // Initialize predicted gradient if needed
+        if (predicted_.requires_grad() && predicted_.grad().size() != predicted_size_) {
+            std::cout << "  Initializing predicted gradient to size " << predicted_size_ << std::endl;
+            auto& predicted_grad = const_cast<Tensor<T>&>(predicted_).grad();
+            predicted_grad.resize(predicted_size_, T(0));
+        }
         
         if (predicted_.shape().empty() || target_.shape().empty() || output_.shape().empty() || output_.shape() != std::vector<size_t>{1, 1}) {
-            throw std::runtime_error("Invalid tensor shapes in BCELossNode. Predicted shape: " + shape_to_string(predicted_.shape()) + ", Target shape: " + shape_to_string(target_.shape()) + ", Output shape: " + shape_to_string(output_.shape()));
+            throw std::runtime_error("Invalid tensor shapes in BCELossNode. Predicted shape: " + utils::shape_to_string(predicted_.shape()) + ", Target shape: " + utils::shape_to_string(target_.shape()) + ", Output shape: " + utils::shape_to_string(output_.shape()));
         }
+    }
+
+    std::string node_type() const override {
+        return "BCELoss";
     }
 
     void backward() override {
         std::cout << "\n=== Starting BCE Loss backward ===" << std::endl;
+        std::cout << "Debug point 1: Getting shapes" << std::endl;
+        std::cout << "Input shape: " << utils::shape_to_string(predicted_shape_) << std::endl;
+        std::cout << "Target shape: " << utils::shape_to_string(target_shape_) << std::endl;
+        std::cout << "Output shape: " << utils::shape_to_string(output_shape_) << std::endl;
         
-        try {
-            // Debug point 1
-            std::cout << "Debug point 1: Getting shapes" << std::endl;
-            std::cout << "Input shape: " << shape_to_string(predicted_shape_) << std::endl;
-            std::cout << "Target shape: " << shape_to_string(target_shape_) << std::endl;
-            std::cout << "Output shape: " << shape_to_string(output_shape_) << std::endl;
-
-            // Debug point 2
-            std::cout << "Debug point 2: Getting tensors" << std::endl;
-            if (!predicted_.requires_grad()) {
-                std::cout << "Warning: Predicted tensor does not require gradients" << std::endl;
-            }
-
-            // Get all tensors first
-            std::cout << "Getting output gradient..." << std::endl;
-            const auto& output_grad = output_.grad();
-            std::cout << "Output gradient size: " << output_grad.size() << std::endl;
-            std::cout << "Output gradient value: " << output_grad[0] << std::endl;
-
-            std::cout << "Getting predicted gradient..." << std::endl;
-            auto& predicted_grad = const_cast<Tensor<T>&>(predicted_).grad();
-            std::cout << "Predicted gradient size: " << predicted_grad.size() << std::endl;
-
-            std::cout << "Getting predicted data..." << std::endl;
-            const auto& predicted_data = predicted_.data();
-            std::cout << "Predicted data size: " << predicted_data.size() << std::endl;
-
-            std::cout << "Getting target data..." << std::endl;
-            const auto& target_data = target_.data();
-            std::cout << "Target data size: " << target_data.size() << std::endl;
-
-            // Debug point 3
-            std::cout << "Debug point 3: Validating sizes" << std::endl;
-            std::cout << "Expected sizes - Output: " << output_size_ 
-                      << ", Predicted: " << predicted_size_
-                      << ", Target: " << target_size_ << std::endl;
+        std::cout << "Debug point 2: Getting tensors" << std::endl;
+        if (predicted_tensor_.requires_grad()) {
+            std::cout << "Predicted tensor requires gradients" << std::endl;
             
-            std::cout << "Actual sizes - Output grad: " << output_grad.size()
-                      << ", Predicted grad: " << predicted_grad.size()
-                      << ", Predicted data: " << predicted_data.size()
-                      << ", Target data: " << target_data.size() << std::endl;
-
-            // Validate sizes with detailed error messages
-            if (output_grad.size() != output_size_) {
-                throw std::runtime_error("Output gradient size mismatch. Expected: " + std::to_string(output_size_) + ", Got: " + std::to_string(output_grad.size()));
+            std::cout << "Predicted tensor state:" << std::endl;
+            std::cout << "  Shape: " << utils::shape_to_string(predicted_tensor_.shape()) << std::endl;
+            std::cout << "  Data size: " << predicted_tensor_.data().size() << std::endl;
+            std::cout << "  Requires grad: " << predicted_tensor_.requires_grad() << std::endl;
+            
+            auto& predicted_grad = predicted_tensor_.grad();
+            const auto& predicted_data = predicted_tensor_.data();
+            const auto& target_data = target_tensor_.data();
+            
+            // Get output gradient, initialize if needed
+            auto& output_grad = output_tensor_.grad();
+            
+            std::cout << "Output tensor state:" << std::endl;
+            std::cout << "  Shape: " << utils::shape_to_string(output_tensor_.shape()) << std::endl;
+            std::cout << "  Data size: " << output_tensor_.data().size() << std::endl;
+            std::cout << "  Grad size before init: " << output_grad.size() << std::endl;
+            
+            if (output_grad.empty() || output_grad.size() != 1) {
+                std::cout << "Initializing output gradient to size 1 with value 1" << std::endl;
+                output_grad.resize(1, T(1));
             }
+            
+            // Validate predicted gradient
+            std::cout << "Predicted gradient state:" << std::endl;
+            std::cout << "  Size before resize: " << predicted_grad.size() << std::endl;
+            std::cout << "  Expected size: " << predicted_size_ << std::endl;
+            
             if (predicted_grad.size() != predicted_size_) {
-                throw std::runtime_error("Predicted gradient size mismatch. Expected: " + std::to_string(predicted_size_) + ", Got: " + std::to_string(predicted_grad.size()));
+                std::cout << "Resizing predicted gradient from " << predicted_grad.size() << " to " << predicted_size_ << std::endl;
+                predicted_grad.resize(predicted_size_, T(0));
             }
-            if (predicted_data.size() != predicted_size_) {
-                throw std::runtime_error("Predicted data size mismatch. Expected: " + std::to_string(predicted_size_) + ", Got: " + std::to_string(predicted_data.size()));
-            }
-            if (target_data.size() != target_size_) {
-                throw std::runtime_error("Target data size mismatch. Expected: " + std::to_string(target_size_) + ", Got: " + std::to_string(target_data.size()));
-            }
-
-            // Debug point 4
-            std::cout << "Debug point 4: Starting gradient computation" << std::endl;
-            std::cout << "Output gradient value: " << output_grad[0] << std::endl;
             
-            // Print first few values with more detail
-            std::cout << "Input tensor values (first 3):" << std::endl;
-            std::cout << std::fixed << std::setprecision(6);
-            for (size_t i = 0; i < std::min(size_t(3), predicted_data.size()); ++i) {
-                std::cout << "Index " << i << ":"
-                         << " pred=" << predicted_data[i]
-                         << " target=" << target_data[i]
-                         << " current_grad=" << predicted_grad[i] << std::endl;
-            }
-
-            // Debug point 5
-            std::cout << "Debug point 5: Computing gradients" << std::endl;
+            std::cout << "Debug point 3: Checking sizes" << std::endl;
+            std::cout << "Predicted grad size: " << predicted_grad.size() << std::endl;
+            std::cout << "Predicted data size: " << predicted_data.size() << std::endl;
+            std::cout << "Target data size: " << target_data.size() << std::endl;
+            std::cout << "Output grad size: " << output_grad.size() << std::endl;
             
-            // Compute gradients with detailed logging
+            // Compute gradient: -(t/p - (1-t)/(1-p)) / N
+            std::cout << "Debug point 4: Computing gradients" << std::endl;
+            const T N = static_cast<T>(predicted_data.size());  // Normalize by batch size
+            const T output_grad_val = output_grad[0];  // Cache this value
+            
+            std::cout << "N = " << N << ", output_grad_val = " << output_grad_val << std::endl;
+            
             for (size_t i = 0; i < predicted_data.size(); ++i) {
-                T p = predicted_data[i];
+                // Clip predicted values to avoid numerical instability
+                T p = std::max(std::min(predicted_data[i], T(1) - T(1e-7)), T(1e-7));
                 T t = target_data[i];
                 
-                // Clip values to avoid division by zero
-                p = std::max(std::min(p, T(1) - T(1e-7)), T(1e-7));
+                // Compute gradient for binary cross entropy:
+                // d(BCE)/dp = -(t/p - (1-t)/(1-p))
+                T grad_i = -(t/p - (T(1)-t)/(T(1)-p)) / N;
                 
-                // Compute gradient components separately for debugging
-                T term1 = -t/p;
-                T term2 = (T(1)-t)/(T(1)-p);
-                T grad_before_scale = term1 + term2;
-                T final_grad = grad_before_scale * output_grad[0];
+                // Accumulate gradient (use += instead of =)
+                predicted_grad[i] += grad_i * output_grad_val;
                 
-                predicted_grad[i] = final_grad;
-                
-                if (i < 3) {  // Print detailed computation for first few elements
-                    std::cout << "Gradient computation for index " << i << ":" << std::endl;
-                    std::cout << "  p = " << p << ", t = " << t << std::endl;
-                    std::cout << "  term1 (-t/p) = " << term1 << std::endl;
-                    std::cout << "  term2 ((1-t)/(1-p)) = " << term2 << std::endl;
-                    std::cout << "  grad before scale = " << grad_before_scale << std::endl;
-                    std::cout << "  final grad = " << final_grad << std::endl;
+                if (i < 3 || std::isnan(grad_i) || std::isinf(grad_i)) {
+                    std::cout << "i=" << i << ": p=" << p << ", t=" << t 
+                              << ", grad=" << grad_i 
+                              << ", final_grad=" << (grad_i * output_grad_val) << std::endl;
                 }
             }
-
-            // Debug point 6
-            std::cout << "Debug point 6: Final gradients" << std::endl;
-            std::cout << "First few gradients after computation:" << std::endl;
+            
+            // Validate final gradients
+            std::cout << "Debug point 5: Validating final gradients" << std::endl;
+            std::cout << "Predicted grad size: " << predicted_grad.size() << std::endl;
+            
+            for (size_t i = 0; i < predicted_grad.size(); ++i) {
+                if (std::isnan(predicted_grad[i]) || std::isinf(predicted_grad[i])) {
+                    std::cout << "Warning: Invalid gradient at index " << i 
+                              << ": " << predicted_grad[i] << std::endl;
+                }
+            }
+            
+            std::cout << "First few gradients:" << std::endl;
             for (size_t i = 0; i < std::min(size_t(3), predicted_grad.size()); ++i) {
                 std::cout << "grad[" << i << "] = " << predicted_grad[i] << std::endl;
             }
-            
-            std::cout << "=== BCE Loss backward completed ===" << std::endl;
-            
-        } catch (const std::exception& e) {
-            std::cerr << "\nError in BCELossNode backward: " << e.what() << std::endl;
-            throw;
-        } catch (...) {
-            std::cerr << "\nUnknown error in BCELossNode backward" << std::endl;
-            throw;
+        } else {
+            std::cout << "Predicted tensor does not require gradients" << std::endl;
         }
+        
+        std::cout << "=== BCE Loss backward completed ===" << std::endl;
     }
 
 private:
+    // References to input tensors
     const Tensor<T>& predicted_;
     const Tensor<T>& target_;
     Tensor<T>& output_;
+    
+    // Store copies to keep tensors alive
+    Tensor<T> predicted_tensor_;
+    Tensor<T> target_tensor_;
+    Tensor<T> output_tensor_;
+    
+    // Store shapes
     const std::vector<size_t> predicted_shape_;
     const std::vector<size_t> target_shape_;
     const std::vector<size_t> output_shape_;
+    
+    // Store sizes
     const size_t predicted_size_;
     const size_t target_size_;
     const size_t output_size_;
@@ -185,16 +186,16 @@ private:
 template<typename T>
 class MSELossNode : public Node {
 public:
-    MSELossNode(const Tensor<T>& pred, const Tensor<T>& target, Tensor<T>& loss)
-        : pred_(pred), target_(target), loss_(loss) {
-        if (pred_.shape().empty() || target_.shape().empty() || loss_.shape().empty() || loss_.shape() != std::vector<size_t>{1, 1}) {
-            throw std::runtime_error("Invalid tensor shapes in MSELossNode. Predicted shape: " + shape_to_string(pred_.shape()) + ", Target shape: " + shape_to_string(target_.shape()) + ", Loss shape: " + shape_to_string(loss_.shape()));
+    MSELossNode(const Tensor<T>& predicted, const Tensor<T>& target, Tensor<T>& output)
+        : predicted_(predicted), target_(target), output_(output) {
+        if (predicted_.shape().empty() || target_.shape().empty() || output_.shape().empty() || output_.shape() != std::vector<size_t>{1, 1}) {
+            throw std::runtime_error("Invalid tensor shapes in MSELossNode. Predicted shape: " + utils::shape_to_string(predicted_.shape()) + ", Target shape: " + utils::shape_to_string(target_.shape()) + ", Loss shape: " + utils::shape_to_string(output_.shape()));
         }
         
         // Store shapes for later use
-        pred_shape_ = pred_.shape();
+        pred_shape_ = predicted_.shape();
         target_shape_ = target_.shape();
-        loss_shape_ = loss_.shape();
+        loss_shape_ = output_.shape();
         
         // Store initial sizes
         pred_size_ = std::accumulate(pred_shape_.begin(), pred_shape_.end(), size_t(1), std::multiplies<size_t>());
@@ -202,19 +203,23 @@ public:
         loss_size_ = std::accumulate(loss_shape_.begin(), loss_shape_.end(), size_t(1), std::multiplies<size_t>());
     }
 
+    std::string node_type() const override {
+        return "MSELoss";
+    }
+
     void backward() override {
-        if (pred_.requires_grad()) {
-            auto& pred_grad = const_cast<Tensor<T>&>(pred_).grad();
-            const auto& pred_data = pred_.data();
+        if (predicted_.requires_grad()) {
+            auto& predicted_grad = const_cast<Tensor<T>&>(predicted_).grad();
+            const auto& predicted_data = predicted_.data();
             const auto& target_data = target_.data();
-            const auto& loss_grad = loss_.grad();
+            const auto& loss_grad = output_.grad();
             
             // Validate sizes
-            if (pred_grad.size() != pred_size_) {
-                throw std::runtime_error("Predicted gradient size mismatch. Expected: " + std::to_string(pred_size_) + ", Got: " + std::to_string(pred_grad.size()));
+            if (predicted_grad.size() != pred_size_) {
+                throw std::runtime_error("Predicted gradient size mismatch. Expected: " + std::to_string(pred_size_) + ", Got: " + std::to_string(predicted_grad.size()));
             }
-            if (pred_data.size() != pred_size_) {
-                throw std::runtime_error("Predicted data size mismatch. Expected: " + std::to_string(pred_size_) + ", Got: " + std::to_string(pred_data.size()));
+            if (predicted_data.size() != pred_size_) {
+                throw std::runtime_error("Predicted data size mismatch. Expected: " + std::to_string(pred_size_) + ", Got: " + std::to_string(predicted_data.size()));
             }
             if (target_data.size() != target_size_) {
                 throw std::runtime_error("Target data size mismatch. Expected: " + std::to_string(target_size_) + ", Got: " + std::to_string(target_data.size()));
@@ -223,17 +228,17 @@ public:
                 throw std::runtime_error("Loss gradient size mismatch. Expected: " + std::to_string(loss_size_) + ", Got: " + std::to_string(loss_grad.size()));
             }
             
-            T scale = T(2) / pred_data.size();
-            for (size_t i = 0; i < pred_data.size(); ++i) {
-                pred_grad[i] += scale * (pred_data[i] - target_data[i]) * loss_grad[0];
+            T scale = T(2) / predicted_data.size();
+            for (size_t i = 0; i < predicted_data.size(); ++i) {
+                predicted_grad[i] += scale * (predicted_data[i] - target_data[i]) * loss_grad[0];
             }
         }
     }
 
 private:
-    const Tensor<T>& pred_;
+    const Tensor<T>& predicted_;
     const Tensor<T>& target_;
-    Tensor<T>& loss_;
+    Tensor<T>& output_;
     std::vector<size_t> pred_shape_;
     std::vector<size_t> target_shape_;
     std::vector<size_t> loss_shape_;
@@ -245,47 +250,71 @@ private:
 template<typename T>
 Tensor<T> binary_cross_entropy(const Tensor<T>& predicted, const Tensor<T>& target) {
     std::cout << "\n=== Starting binary_cross_entropy forward ===" << std::endl;
+    std::cout << "Predicted requires_grad: " << std::boolalpha << predicted.requires_grad() << std::endl;
+    std::cout << "Target requires_grad: " << target.requires_grad() << std::endl;
+    std::cout << "Predicted shape: " << utils::shape_to_string(predicted.shape()) << std::endl;
+    std::cout << "Target shape: " << utils::shape_to_string(target.shape()) << std::endl;
     
-    // Create output tensor
-    Tensor<T> output(std::vector<size_t>{1, 1});
-    std::cout << "Created output tensor with shape: " << shape_to_string(output.shape()) << std::endl;
+    // Validate input shapes
+    if (predicted.shape() != target.shape()) {
+        throw std::runtime_error("Shape mismatch: predicted shape " + 
+            utils::shape_to_string(predicted.shape()) + " != target shape " + 
+            utils::shape_to_string(target.shape()));
+    }
     
-    // Set requires_grad before initializing gradient
+    // Create output tensor with requires_grad=true
+    std::vector<size_t> output_shape{1, 1};
+    Tensor<T> output(output_shape);
     output.set_requires_grad(true);
-    std::cout << "Output requires grad: " << std::boolalpha << output.requires_grad() << std::endl;
+    std::cout << "Created output tensor with shape " << utils::shape_to_string(output.shape()) << std::endl;
     
-    // Initialize output gradient to 1
-    output.grad()[0] = T(1);
-    std::cout << "Output gradient size: " << output.grad().size() << std::endl;
-    std::cout << "Output gradient value: " << output.grad()[0] << std::endl;
+    // Initialize output gradient to 1 for backward pass
+    auto& grad = output.grad();
+    std::cout << "Initializing output gradient to size 1 with value 1" << std::endl;
+    grad.resize(1, T(1));
     
-    // Verify gradient is still set
-    std::cout << "Verifying output gradient before creating node:" << std::endl;
-    std::cout << "Output gradient size: " << output.grad().size() << std::endl;
-    std::cout << "Output gradient value: " << output.grad()[0] << std::endl;
+    std::cout << "Output tensor state:" << std::endl;
+    std::cout << "  requires_grad: " << output.requires_grad() << std::endl;
+    std::cout << "  gradient size: " << grad.size() << std::endl;
+    std::cout << "  gradient value: " << grad[0] << std::endl;
     
-    // Create and add node to computation graph
+    // Create and add node to computation graph if predicted requires gradients
     if (predicted.requires_grad()) {
+        std::cout << "Creating BCELossNode (predicted requires gradients)" << std::endl;
         auto node = std::make_shared<BCELossNode<T>>(predicted, target, output);
         ComputationGraph::getInstance().addNode(node);
+        std::cout << "Added node to computation graph" << std::endl;
+        
+        // Verify output tensor state after node creation
+        std::cout << "Output tensor state after node creation:" << std::endl;
+        std::cout << "  requires_grad: " << output.requires_grad() << std::endl;
+        std::cout << "  gradient size: " << output.grad().size() << std::endl;
+        std::cout << "  gradient value: " << output.grad()[0] << std::endl;
+    } else {
+        std::cout << "Skipping BCELossNode creation (predicted does not require gradients)" << std::endl;
     }
     
     // Compute forward pass
     const auto& p = predicted.data();
     const auto& t = target.data();
     auto& out = output.data();
+    out.resize(1);  // Ensure output data is sized correctly
     
+    // Clip predicted values to avoid log(0) and compute loss
     T total_loss = T(0);
     for (size_t i = 0; i < p.size(); ++i) {
-        // Clip values to avoid log(0)
-        T p_i = std::max(std::min(p[i], T(1) - T(1e-7)), T(1e-7));
-        T t_i = t[i];
-        
-        // Standard binary cross entropy formula: -t*log(p) - (1-t)*log(1-p)
-        total_loss += -t_i * std::log(p_i) - (T(1) - t_i) * std::log(T(1) - p_i);
+        T pred = std::max(std::min(p[i], T(1) - T(1e-7)), T(1e-7));
+        total_loss -= t[i] * std::log(pred) + (T(1) - t[i]) * std::log(T(1) - pred);
     }
-    out[0] = total_loss / static_cast<T>(p.size());
-
+    out[0] = total_loss / p.size();
+    
+    // Final verification of output tensor state
+    std::cout << "Final output tensor state:" << std::endl;
+    std::cout << "  requires_grad: " << output.requires_grad() << std::endl;
+    std::cout << "  gradient size: " << output.grad().size() << std::endl;
+    std::cout << "  gradient value: " << output.grad()[0] << std::endl;
+    std::cout << "  loss value: " << out[0] << std::endl;
+    
     std::cout << "=== binary_cross_entropy forward completed ===" << std::endl;
     return output;
 }
