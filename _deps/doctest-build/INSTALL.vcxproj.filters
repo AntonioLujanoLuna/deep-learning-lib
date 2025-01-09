@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\aluja\Desktop\DL\CMakeFiles\4e80604cd9f7e18ba4535cb38412e721\INSTALL_force.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{6D139FE4-564B-3CB9-BAC0-5F2E742CAE56}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

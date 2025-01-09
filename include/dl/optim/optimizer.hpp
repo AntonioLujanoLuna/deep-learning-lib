@@ -80,23 +80,30 @@ public:
                 }
                 avg_grad /= grad.size();
                 
-                std::cout << "Gradient stats - Min: " << min_grad 
-                          << ", Max: " << max_grad 
-                          << ", Avg: " << avg_grad << std::endl;
+                std::cout << "Gradient stats - Min: " << min_grad << ", Max: " << max_grad << ", Avg: " << avg_grad << std::endl;
                 
                 // Print first few values
                 std::cout << "First 3 values before update:" << std::endl;
                 for (size_t i = 0; i < std::min(size_t(3), data.size()); ++i) {
-                    std::cout << "  data[" << i << "] = " << data[i] 
-                             << ", grad[" << i << "] = " << grad[i] << std::endl;
+                    std::cout << "  data[" << i << "] = " << data[i] << ", grad[" << i << "] = " << grad[i] << std::endl;
                 }
             }
             
             // Update parameters with gradient clipping
-            const T clip_value = T(1);
+            const T clip_value = T(1);  // Reduced from 5 to 1 for more stable training
+            T max_norm = T(0);
+            
+            // First compute gradient norm
+            for (size_t i = 0; i < grad.size(); ++i) {
+                max_norm = std::max(max_norm, std::abs(grad[i]));
+            }
+            
+            // Scale gradients if norm is too large
+            T scale = max_norm > clip_value ? clip_value / max_norm : T(1);
+            
+            // Apply updates
             for (size_t i = 0; i < data.size(); ++i) {
-                T clipped_grad = std::max(std::min(grad[i], clip_value), -clip_value);
-                data[i] -= learning_rate_ * clipped_grad;
+                data[i] -= learning_rate_ * grad[i] * scale;
             }
             
             if (print_debug) {

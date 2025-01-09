@@ -25,7 +25,7 @@ TEST_CASE("Linear layer operations") {
         input_data[1] = 2.0f;
         
         auto output = layer.forward(input);
-        std::cout << "Output requires_grad: " << output.requires_grad() << std::endl;
+        //std::cout << "Output requires_grad: " << output.requires_grad() << std::endl;
         
         // Create target tensor
         dl::Tensor<float> target({1, 3});

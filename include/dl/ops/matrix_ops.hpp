@@ -49,7 +49,18 @@ public:
         }
         std::cout << std::endl;
         
+        // Clear gradients before computing them
         if (a_.requires_grad()) {
+            auto& a_grad = const_cast<Tensor<T>&>(a_).grad();
+            std::fill(a_grad.begin(), a_grad.end(), T(0));
+        }
+        if (b_.requires_grad()) {
+            auto& b_grad = const_cast<Tensor<T>&>(b_).grad();
+            std::fill(b_grad.begin(), b_grad.end(), T(0));
+        }
+        
+        if (a_.requires_grad()) {
+            std::cout << "Computing gradients for A" << std::endl;
             auto& a_grad = const_cast<Tensor<T>&>(a_).grad();
             const auto& b_data = b_.data();
             
@@ -61,13 +72,11 @@ public:
             }
             
             // dL/dA = dL/dC * B^T
-            for (size_t i = 0; i < a_shape[0]; ++i) {
-                for (size_t j = 0; j < b_shape[0]; ++j) {
-                    T sum = T(0);
-                    for (size_t k = 0; k < b_shape[1]; ++k) {
-                        sum += out_grad[i * b_shape[1] + k] * b_data[j * b_shape[1] + k];
+            for (size_t i = 0; i < a_shape[0]; ++i) {  // M
+                for (size_t j = 0; j < a_shape[1]; ++j) {  // K
+                    for (size_t k = 0; k < b_shape[1]; ++k) {  // N
+                        a_grad[i * a_shape[1] + j] += out_grad[i * b_shape[1] + k] * b_data[j * b_shape[1] + k];
                     }
-                    a_grad[i * b_shape[0] + j] += sum;
                 }
             }
             
@@ -79,6 +88,7 @@ public:
         }
         
         if (b_.requires_grad()) {
+            std::cout << "Computing gradients for B" << std::endl;
             auto& b_grad = const_cast<Tensor<T>&>(b_).grad();
             const auto& a_data = a_.data();
             
@@ -90,13 +100,11 @@ public:
             }
             
             // dL/dB = A^T * dL/dC
-            for (size_t i = 0; i < b_shape[0]; ++i) {
-                for (size_t j = 0; j < b_shape[1]; ++j) {
-                    T sum = T(0);
-                    for (size_t k = 0; k < a_shape[0]; ++k) {
-                        sum += a_data[k * b_shape[0] + i] * out_grad[k * b_shape[1] + j];
+            for (size_t i = 0; i < b_shape[0]; ++i) {  // K
+                for (size_t j = 0; j < b_shape[1]; ++j) {  // N
+                    for (size_t k = 0; k < a_shape[0]; ++k) {  // M
+                        b_grad[i * b_shape[1] + j] += a_data[k * a_shape[1] + i] * out_grad[k * b_shape[1] + j];
                     }
-                    b_grad[i * b_shape[1] + j] += sum;
                 }
             }
             
@@ -118,9 +126,9 @@ private:
 
 template<typename T>
 Tensor<T> matmul(const Tensor<T>& a, const Tensor<T>& b) {
-    std::cout << "\n=== Starting matmul forward ===" << std::endl;
-    std::cout << "Input a requires_grad: " << std::boolalpha << a.requires_grad() << std::endl;
-    std::cout << "Input b requires_grad: " << b.requires_grad() << std::endl;
+    //std::cout << "\n=== Starting matmul forward ===" << std::endl;
+    //std::cout << "Input a requires_grad: " << std::boolalpha << a.requires_grad() << std::endl;
+    //std::cout << "Input b requires_grad: " << b.requires_grad() << std::endl;
     
     // Check dimensions
     if (a.shape().size() != 2 || b.shape().size() != 2 || a.shape()[1] != b.shape()[0]) {
@@ -134,7 +142,8 @@ Tensor<T> matmul(const Tensor<T>& a, const Tensor<T>& b) {
     // Create output tensor and store it in graph
     auto& graph = ComputationGraph::getInstance();
     std::shared_ptr<Tensor<T>> output = std::make_shared<Tensor<T>>(std::vector<size_t>{m, n});
-    output->set_requires_grad(a.requires_grad() || b.requires_grad());
+    output->set_requires_grad(true);  // Always set requires_grad to true
+    output->grad().resize(m * n, T(0));  // Initialize gradient vector
     
     // Store tensors in computation graph
     graph.storeTensor(a);
@@ -156,17 +165,12 @@ Tensor<T> matmul(const Tensor<T>& a, const Tensor<T>& b) {
         }
     }
 
-    // Create node for backward pass if needed
-    if (a.requires_grad() || b.requires_grad()) {
-        std::cout << "Setting output requires_grad to true (inputs require gradients)" << std::endl;
-        auto node = std::make_shared<MatMulNode<T>>(a, b, *output);
-        graph.addNode(node);
-    } else {
-        std::cout << "Output does not require gradients (no inputs require gradients)" << std::endl;
-    }
+    // Create node for backward pass
+    auto node = std::make_shared<MatMulNode<T>>(a, b, *output);
+    graph.addNode(node);
 
-    std::cout << "Output requires_grad: " << output->requires_grad() << std::endl;
-    std::cout << "=== matmul forward completed ===" << std::endl;
+    //std::cout << "Output requires_grad: " << output->requires_grad() << std::endl;
+    //std::cout << "=== matmul forward completed ===" << std::endl;
     return *output;
 }
 
@@ -311,14 +315,14 @@ Tensor<T> conv2d(const Tensor<T>& input, const Tensor<T>& kernel,
     
     // Create node for backward pass if needed
     if (input.requires_grad() || kernel.requires_grad()) {
-        std::cout << "Setting output requires_grad to true (inputs require gradients)" << std::endl;
+        //std::cout << "Setting output requires_grad to true (inputs require gradients)" << std::endl;
         auto node = std::make_shared<Conv2DNode<T>>(input, kernel, *result, stride, padding);
         graph.addNode(node);
     } else {
-        std::cout << "Output does not require gradients (no inputs require gradients)" << std::endl;
+        //std::cout << "Output does not require gradients (no inputs require gradients)" << std::endl;
     }
 
-    std::cout << "Output requires_grad: " << result->requires_grad() << std::endl;
+    //std::cout << "Output requires_grad: " << result->requires_grad() << std::endl;
     return *result;
 }
 

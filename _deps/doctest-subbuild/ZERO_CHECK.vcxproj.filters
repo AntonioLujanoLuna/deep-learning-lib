@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\aluja\Desktop\DL\_deps\doctest-subbuild\CMakeFiles\4a19f6dfa92e6e5b0505fbf40bc8dfc4\generate.stamp.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{19069FC5-A2F0-3959-A482-F7E5DA7E3495}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

@@ -34,7 +34,7 @@ namespace detail {
             data_.resize(total_size, T(0));
             grad_.resize(total_size, T(0));
             
-            std::cout << "TensorImpl created with shape: " << utils::shape_to_string(shape_) << ", size: " << total_size << std::endl;
+            //std::cout << "TensorImpl created with shape: " << utils::shape_to_string(shape_) << ", size: " << total_size << std::endl;
         }
 
         const std::vector<T>& data() const { return data_; }
@@ -44,9 +44,9 @@ namespace detail {
             if (shape_.empty()) {
                 throw std::runtime_error("Cannot access gradient: tensor has empty shape");
             }
-            std::cout << "Accessing gradient (const) for tensor with shape " << utils::shape_to_string(shape_) << std::endl;
-            std::cout << "requires_grad: " << std::boolalpha << requires_grad_ << std::endl;
-            std::cout << "grad size: " << grad_.size() << std::endl;
+            //std::cout << "Accessing gradient (const) for tensor with shape " << utils::shape_to_string(shape_) << std::endl;
+            //std::cout << "requires_grad: " << std::boolalpha << requires_grad_ << std::endl;
+            //std::cout << "grad size: " << grad_.size() << std::endl;
             if (!requires_grad_) {
                 std::cerr << "Warning: Accessing gradient of tensor that doesn't require gradients" << std::endl;
             }
@@ -60,14 +60,14 @@ namespace detail {
             if (shape_.empty()) {
                 throw std::runtime_error("Cannot access gradient: tensor has empty shape");
             }
-            std::cout << "Accessing gradient (mutable) for tensor with shape " << utils::shape_to_string(shape_) << std::endl;
-            std::cout << "requires_grad: " << std::boolalpha << requires_grad_ << std::endl;
-            std::cout << "grad size: " << grad_.size() << std::endl;
+            //std::cout << "Accessing gradient (mutable) for tensor with shape " << utils::shape_to_string(shape_) << std::endl;
+            //std::cout << "requires_grad: " << std::boolalpha << requires_grad_ << std::endl;
+            //std::cout << "grad size: " << grad_.size() << std::endl;
             
             // Ensure gradient vector has correct size
             size_t total_size = std::accumulate(shape_.begin(), shape_.end(), size_t(1), std::multiplies<size_t>());
             if (grad_.size() != total_size) {
-                std::cout << "Resizing gradient vector from " << grad_.size() << " to " << total_size << std::endl;
+                //std::cout << "Resizing gradient vector from " << grad_.size() << " to " << total_size << std::endl;
                 grad_.resize(total_size, T(0));
             }
             
@@ -83,13 +83,13 @@ namespace detail {
         
         void set_requires_grad(bool requires_grad) {
             requires_grad_ = requires_grad;
-            std::cout << "Setting requires_grad to " << std::boolalpha << requires_grad << " for tensor with shape " << utils::shape_to_string(shape_) << std::endl;
+            //std::cout << "Setting requires_grad to " << std::boolalpha << requires_grad << " for tensor with shape " << utils::shape_to_string(shape_) << std::endl;
             
             if (requires_grad) {
                 // Ensure gradient vector is properly sized
                 size_t total_size = std::accumulate(shape_.begin(), shape_.end(), size_t(1), std::multiplies<size_t>());
                 if (grad_.size() != total_size) {
-                    std::cout << "Resizing gradient vector from " << grad_.size() << " to " << total_size << std::endl;
+                    //std::cout << "Resizing gradient vector from " << grad_.size() << " to " << total_size << std::endl;
                     grad_.resize(total_size, T(0));
                 }
             }
@@ -119,38 +119,51 @@ public:
     using TensorPtr = std::shared_ptr<detail::TensorImpl<T>>;
 
     Tensor() : impl_(std::make_shared<detail::TensorImpl<T>>(std::vector<size_t>{1, 1})) {
-        std::cout << "Creating default tensor with shape [1, 1] (impl=" << impl_.get() << ")" << std::endl;
+        //std::cout << "Creating default tensor with shape [1, 1] (impl=" << impl_.get() << ")" << std::endl;
     }
 
     explicit Tensor(const std::vector<size_t>& shape) {
         if (shape.empty()) {
-            std::cout << "Creating tensor with default shape [1, 1] (empty shape provided)" << std::endl;
+            //std::cout << "Creating tensor with default shape [1, 1] (empty shape provided)" << std::endl;
             impl_ = std::make_shared<detail::TensorImpl<T>>(std::vector<size_t>{1, 1});
         } else {
-            std::cout << "Creating tensor with shape " << utils::shape_to_string(shape) << std::endl;
+            //std::cout << "Creating tensor with shape " << utils::shape_to_string(shape) << std::endl;
             impl_ = std::make_shared<detail::TensorImpl<T>>(shape);
         }
-        std::cout << "  impl=" << impl_.get() << std::endl;
+        //std::cout << "  impl=" << impl_.get() << std::endl;
     }
 
-    // Copy constructor - share implementation
-    Tensor(const Tensor& other) : impl_(other.impl_) {
-        if (!impl_) {
+    // Copy constructor - create new implementation
+    Tensor(const Tensor& other) {
+        if (!other.impl_) {
             throw std::runtime_error("Cannot copy tensor with null implementation");
         }
-        std::cout << "Copying tensor with shape " << utils::shape_to_string(impl_->shape()) 
-                  << " (impl=" << impl_.get() << ")" << std::endl;
+        impl_ = std::make_shared<detail::TensorImpl<T>>(other.impl_->shape());
+        impl_->data() = other.impl_->data();
+        impl_->set_requires_grad(other.impl_->requires_grad());
+        
+        // Initialize gradient to zero, don't copy from other tensor
+        if (impl_->requires_grad()) {
+            size_t total_size = std::accumulate(impl_->shape().begin(), impl_->shape().end(), size_t(1), std::multiplies<size_t>());
+            impl_->grad().resize(total_size, T(0));
+        }
     }
-
-    // Assignment operator - share implementation
+    
+    // Assignment operator - create new implementation
     Tensor& operator=(const Tensor& other) {
         if (this != &other) {
             if (!other.impl_) {
                 throw std::runtime_error("Cannot assign from tensor with null implementation");
             }
-            impl_ = other.impl_;
-            std::cout << "Assigning tensor with shape " << utils::shape_to_string(impl_->shape()) 
-                      << " (impl=" << impl_.get() << ")" << std::endl;
+            impl_ = std::make_shared<detail::TensorImpl<T>>(other.impl_->shape());
+            impl_->data() = other.impl_->data();
+            impl_->set_requires_grad(other.impl_->requires_grad());
+            
+            // Initialize gradient to zero, don't copy from other tensor
+            if (impl_->requires_grad()) {
+                size_t total_size = std::accumulate(impl_->shape().begin(), impl_->shape().end(), size_t(1), std::multiplies<size_t>());
+                impl_->grad().resize(total_size, T(0));
+            }
         }
         return *this;
     }
