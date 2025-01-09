@@ -17,9 +17,9 @@ namespace ops {
 template<typename T>
 class BCELossNode : public Node {
 public:
-    BCELossNode(const Tensor<T>& predicted, const Tensor<T>& target, Tensor<T>& output)
-        : predicted_tensor_(const_cast<Tensor<T>&>(predicted))
-        , target_tensor_(const_cast<Tensor<T>&>(target))
+    BCELossNode(Tensor<T>& predicted, Tensor<T>& target, Tensor<T>& output)
+        : predicted_tensor_(predicted)
+        , target_tensor_(target)
         , output_tensor_(output)
         , predicted_shape_(predicted.shape())
         , target_shape_(target.shape())
@@ -92,8 +92,8 @@ private:
 template<typename T>
 class MSELossNode : public Node {
 public:
-    MSELossNode(const Tensor<T>& predicted, const Tensor<T>& target, Tensor<T>& output)
-        : predicted_tensor_(const_cast<Tensor<T>&>(predicted)), target_tensor_(const_cast<Tensor<T>&>(target)), output_tensor_(output) {
+    MSELossNode(Tensor<T>& predicted, Tensor<T>& target, Tensor<T>& output)
+        : predicted_tensor_(predicted), target_tensor_(target), output_tensor_(output) {
         if (predicted_tensor_.shape().empty() || target_tensor_.shape().empty() || 
             output_tensor_.shape().empty() || output_tensor_.shape() != std::vector<size_t>{1, 1}) {
             throw std::runtime_error("Invalid tensor shapes in MSELossNode. Predicted shape: " + 
@@ -119,7 +119,7 @@ public:
 
     void backward() override {
         if (predicted_tensor_.requires_grad()) {
-            auto& predicted_grad = predicted_tensor_.grad();
+            auto& predicted_grad = const_cast<Tensor<T>&>(predicted_tensor_).grad();
             const auto& predicted_data = predicted_tensor_.data();
             const auto& target_data = target_tensor_.data();
             auto& loss_grad = output_tensor_.grad();
@@ -184,10 +184,10 @@ public:
     }
 
 private:
-    // Store references to avoid copying
-    Tensor<T>& predicted_tensor_;
-    Tensor<T>& target_tensor_;
-    Tensor<T>& output_tensor_;
+    // Store by value to avoid dangling references
+    Tensor<T> predicted_tensor_;
+    Tensor<T> target_tensor_;
+    Tensor<T>& output_tensor_;  // Keep reference since this is managed by computation graph
     std::vector<size_t> pred_shape_;
     std::vector<size_t> target_shape_;
     std::vector<size_t> loss_shape_;
@@ -197,64 +197,14 @@ private:
 };
 
 template<typename T>
-Tensor<T> binary_cross_entropy(const Tensor<T>& predicted, const Tensor<T>& target) {
-    //std::cout << "\n=== Starting binary_cross_entropy forward ===" << std::endl;
-    //std::cout << "Predicted requires_grad: " << std::boolalpha << predicted.requires_grad() << std::endl;
-    //std::cout << "Target requires_grad: " << target.requires_grad() << std::endl;
-    //std::cout << "Predicted shape: " << utils::shape_to_string(predicted.shape()) << std::endl;
-    //std::cout << "Target shape: " << utils::shape_to_string(target.shape()) << std::endl;
-    
-    // Validate input shapes
-    if (predicted.shape() != target.shape()) {
-        throw std::runtime_error("Shape mismatch: predicted shape " + 
-            utils::shape_to_string(predicted.shape()) + " != target shape " + 
-            utils::shape_to_string(target.shape()));
-    }
-    
-    // Create output tensor with requires_grad=true
-    std::vector<size_t> output_shape{1, 1};
-    Tensor<T> output(output_shape);
-    output.set_requires_grad(true);
-    output.grad().resize(1, T(1));  
-    //std::cout << "Created output tensor with shape " << utils::shape_to_string(output.shape()) << std::endl;
-    
-    // Create and add node to computation graph
-    auto node = std::make_shared<BCELossNode<T>>(predicted, target, output);
-    ComputationGraph::getInstance().addNode(node);
-    
-    // Compute forward pass
-    const auto& p = predicted.data();
-    const auto& t = target.data();
-    auto& out = output.data();
-    out.resize(1);  
-    
-    // Clip predicted values to avoid log(0) and compute loss
-    T total_loss = T(0);
-    for (size_t i = 0; i < p.size(); ++i) {
-        T pred = std::max(std::min(p[i], T(1) - T(1e-7)), T(1e-7));
-        total_loss -= t[i] * std::log(pred) + (T(1) - t[i]) * std::log(T(1) - pred);
-    }
-    out[0] = total_loss / p.size();
-    
-    // Final verification of output tensor state
-    //std::cout << "Final output tensor state:" << std::endl;
-    //std::cout << "  requires_grad: " << output.requires_grad() << std::endl;
-    //std::cout << "  gradient size: " << output.grad().size() << std::endl;
-    //std::cout << "  gradient value: " << output.grad()[0] << std::endl;
-    //std::cout << "  loss value: " << out[0] << std::endl;
-    
-    //std::cout << "=== binary_cross_entropy forward completed ===" << std::endl;
-    return output;
-}
-
-template<typename T>
 Tensor<T> mse_loss(const Tensor<T>& predicted, const Tensor<T>& target) {
-    Tensor<T> output(std::vector<size_t>{1, 1});
-    output.set_requires_grad(true);
+    // Create output tensor and store it in the graph
+    auto output = std::make_shared<Tensor<T>>(std::vector<size_t>{1, 1});
+    output->set_requires_grad(true);
     
     const auto& p = predicted.data();
     const auto& t = target.data();
-    auto& out = output.data();
+    auto& out = output->data();
     out.resize(1);  
     
     T total_loss = T(0);
@@ -264,15 +214,67 @@ Tensor<T> mse_loss(const Tensor<T>& predicted, const Tensor<T>& target) {
     }
     out[0] = total_loss / static_cast<T>(p.size());
     
-    // Initialize output gradient to 1.0 since this is the final node
-    output.grad().assign(1, T(1));  
+    // Initialize gradient vector but don't set value yet
+    output->grad().resize(1);
     
     if (predicted.requires_grad()) {
-        auto node = std::make_shared<MSELossNode<T>>(predicted, target, output);
-        ComputationGraph::getInstance().addNode(node);
+        // Create a copy of the predicted tensor to avoid const_cast
+        auto stored_predicted = std::make_shared<Tensor<T>>(predicted);
+        auto stored_target = std::make_shared<Tensor<T>>(target);
+        
+        // Store tensors in computation graph
+        auto& graph = ComputationGraph::getInstance();
+        graph.storeTensorPtr(stored_predicted);
+        graph.storeTensorPtr(stored_target);
+        graph.storeTensorPtr(output);
+        
+        auto node = std::make_shared<MSELossNode<T>>(*stored_predicted, *stored_target, *output);
+        graph.addNode(node);
     }
     
-    return output;
+    return *output;
+}
+
+template<typename T>
+Tensor<T> binary_cross_entropy(const Tensor<T>& predicted, const Tensor<T>& target) {
+    // Create output tensor and store it in the graph
+    auto output = std::make_shared<Tensor<T>>(std::vector<size_t>{1, 1});
+    output->set_requires_grad(true);
+    
+    const auto& p = predicted.data();
+    const auto& t = target.data();
+    auto& out = output->data();
+    out.resize(1);
+    
+    T total_loss = T(0);
+    const T eps = T(1e-7);  // Small epsilon for numerical stability
+    
+    for (size_t i = 0; i < p.size(); ++i) {
+        T p_i = std::max(std::min(p[i], T(1) - eps), eps);
+        T t_i = t[i];
+        total_loss += -t_i * std::log(p_i) - (T(1) - t_i) * std::log(T(1) - p_i);
+    }
+    out[0] = total_loss / static_cast<T>(p.size());
+    
+    // Initialize gradient vector but don't set value yet
+    output->grad().resize(1);
+    
+    if (predicted.requires_grad()) {
+        // Create a copy of the predicted tensor to avoid const_cast
+        auto stored_predicted = std::make_shared<Tensor<T>>(predicted);
+        auto stored_target = std::make_shared<Tensor<T>>(target);
+        
+        // Store tensors in computation graph
+        auto& graph = ComputationGraph::getInstance();
+        graph.storeTensorPtr(stored_predicted);
+        graph.storeTensorPtr(stored_target);
+        graph.storeTensorPtr(output);
+        
+        auto node = std::make_shared<BCELossNode<T>>(*stored_predicted, *stored_target, *output);
+        graph.addNode(node);
+    }
+    
+    return *output;
 }
 
 } // namespace ops

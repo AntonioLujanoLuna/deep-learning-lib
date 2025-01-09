@@ -23,7 +23,7 @@ public:
             std::cout << "Setting requires_grad=true for parameter tensor" << std::endl;
             param.set_requires_grad(true);
         }
-        parameters_.push_back(&param);
+        parameters_.push_back(param);
     }
 
     void add_parameters(const std::vector<std::reference_wrapper<Tensor<T>>>& params) {
@@ -35,7 +35,7 @@ public:
     void zero_grad() {
         std::cout << "Zeroing gradients for " << parameters_.size() << " parameters" << std::endl;
         for (auto& param : parameters_) {
-            param->zero_grad();
+            param.get().zero_grad();
         }
     }
 
@@ -50,13 +50,13 @@ public:
         }
         
         for (auto& param : parameters_) {
-            if (!param->requires_grad()) {
+            if (!param.get().requires_grad()) {
                 std::cout << "Warning: Parameter tensor does not require gradients" << std::endl;
                 continue;
             }
             
-            const auto& grad = param->grad();
-            auto& data = param->data();
+            const auto& grad = param.get().grad();
+            auto& data = param.get().data();
             
             // Validate tensor sizes
             if (grad.size() != data.size()) {
@@ -66,7 +66,7 @@ public:
             
             if (print_debug) {
                 std::cout << "\nParameter update:" << std::endl;
-                std::cout << "Shape: " << utils::shape_to_string(param->shape()) << std::endl;
+                std::cout << "Shape: " << utils::shape_to_string(param.get().shape()) << std::endl;
                 
                 // Print statistics
                 T max_grad = std::numeric_limits<T>::lowest();
@@ -119,7 +119,7 @@ public:
 
 private:
     T learning_rate_;
-    std::vector<Tensor<T>*> parameters_;
+    std::vector<std::reference_wrapper<Tensor<T>>> parameters_;
 };
 
 } // namespace optim

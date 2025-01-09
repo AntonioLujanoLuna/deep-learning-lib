@@ -102,10 +102,14 @@ void generate_data(std::vector<dl::Tensor<float>>& inputs,
 }
 
 int main() {
+    std::cout << "Starting MLP training example..." << std::endl;
+
     // Create model and optimizer
     MLP model;
-    dl::optim::SGD<float> optimizer(0.01f);  // Increased learning rate
-    
+    std::cout << "Created MLP" << std::endl;
+    dl::optim::SGD<float> optimizer(0.1f);  // Increased learning rate for faster convergence
+    std::cout << "Created optimizer" << std::endl;
+
     // Add model parameters to optimizer
     model.layer1.add_parameters_to_optimizer(optimizer);
     model.layer2.add_parameters_to_optimizer(optimizer);
@@ -113,17 +117,19 @@ int main() {
     // Generate training data
     std::vector<dl::Tensor<float>> inputs;
     std::vector<dl::Tensor<float>> targets;
-    generate_data(inputs, targets, 2000);  // More training data
+    generate_data(inputs, targets, 1000);  // Reduced data size for faster training
     
     // Training loop
     float best_accuracy = 0.0f;
     float prev_loss = std::numeric_limits<float>::max();
     int patience = 0;
-    const int max_patience = 20;
-    const size_t batch_size = 32;
-    const int max_epochs = 100;  // Increased epochs
+    const int max_patience = 10;  // Reduced patience for faster stopping
+    const size_t batch_size = 16;  // Reduced batch size
+    const int max_epochs = 50;  // Reduced epochs
     
     for (int epoch = 0; epoch < max_epochs; ++epoch) {
+        std::cout << "\nEpoch " << epoch << std::endl;
+        
         float total_loss = 0.0f;
         int correct = 0;
         
@@ -139,10 +145,11 @@ int main() {
             size_t batch_end = std::min(batch_start + batch_size, inputs.size());
             float batch_size_f = static_cast<float>(batch_end - batch_start);
             
-            // Zero gradients before forward pass
+            // Zero gradients before batch
+            std::cout << "Zeroing gradients..." << std::endl;
             optimizer.zero_grad();
             
-            // Clear computation graph before forward pass
+            // Clear computation graph before batch
             dl::ComputationGraph::getInstance().clear();
             
             // Accumulate gradients over batch
@@ -153,17 +160,23 @@ int main() {
                 size_t idx = indices[i];
                 
                 // Forward pass
+                std::cout << "Starting forward pass..." << std::endl;
                 dl::Tensor<float> pred = model.forward(inputs[idx]);
+                std::cout << "Forward pass completed" << std::endl;
                 
                 // Compute loss for this batch
-                dl::Tensor<float> loss = dl::ops::mse_loss(pred, targets[idx]);
+                std::cout << "Computing loss..." << std::endl;
+                dl::Tensor<float> loss = dl::ops::binary_cross_entropy(pred, targets[idx]);
+                std::cout << "Loss computed: " << loss.data()[0] << std::endl;
                 
-                // Scale the loss gradient by batch size
-                loss.grad().clear();
-                loss.grad().resize(1, 1.0f / batch_size_f);
+                // Initialize loss gradient to 1/batch_size
+                loss.set_requires_grad(true);
+                loss.grad().assign(1, 1.0f / batch_size_f);
                 
                 // Backward pass
+                std::cout << "Starting backward pass..." << std::endl;
                 dl::ComputationGraph::getInstance().backward();
+                std::cout << "Backward pass completed" << std::endl;
                 
                 // Track accuracy
                 bool correct_prediction = (pred.data()[0] >= 0.5f) == (targets[idx].data()[0] >= 0.5f);
@@ -172,10 +185,15 @@ int main() {
                 }
                 
                 batch_loss += loss.data()[0];
+                
+                // Clear computation graph after each sample
+                dl::ComputationGraph::getInstance().clear();
             }
             
-            // Update weights
+            // Update weights after batch
+            std::cout << "Taking optimizer step..." << std::endl;
             optimizer.step();
+            std::cout << "Optimizer step completed" << std::endl;
             
             // Print weights after update for first batch
             if (epoch == 0 && batch_start == 0) {
@@ -212,7 +230,7 @@ int main() {
         best_accuracy = std::max(best_accuracy, accuracy);
         
         // Print progress every epoch
-        std::cout << "Epoch " << epoch + 1 << "/" << 100
+        std::cout << "Epoch " << epoch + 1 << "/" << 50
                  << " - Loss: " << avg_loss 
                  << " - Accuracy: " << accuracy << "% "
                  << " - Best: " << best_accuracy << "%" << std::endl;
@@ -230,5 +248,6 @@ int main() {
         }
     }
     
+    std::cout << "Training completed successfully" << std::endl;
     return 0;
 }

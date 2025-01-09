@@ -51,10 +51,12 @@ public:
         
         // Clear gradients before computing them
         if (a_.requires_grad()) {
+            std::cout << "Clearing A gradients..." << std::endl;
             auto& a_grad = const_cast<Tensor<T>&>(a_).grad();
             std::fill(a_grad.begin(), a_grad.end(), T(0));
         }
         if (b_.requires_grad()) {
+            std::cout << "Clearing B gradients..." << std::endl;
             auto& b_grad = const_cast<Tensor<T>&>(b_).grad();
             std::fill(b_grad.begin(), b_grad.end(), T(0));
         }
@@ -119,40 +121,46 @@ public:
     }
 
 private:
-    const Tensor<T>& a_;
-    const Tensor<T>& b_;
-    Tensor<T>& output_;
+    Tensor<T> a_;  // Store by value
+    Tensor<T> b_;  // Store by value
+    Tensor<T>& output_;  // Keep reference since this is managed by computation graph
 };
 
 template<typename T>
 Tensor<T> matmul(const Tensor<T>& a, const Tensor<T>& b) {
-    //std::cout << "\n=== Starting matmul forward ===" << std::endl;
-    //std::cout << "Input a requires_grad: " << std::boolalpha << a.requires_grad() << std::endl;
-    //std::cout << "Input b requires_grad: " << b.requires_grad() << std::endl;
+    std::cout << "\n=== Starting matmul forward ===" << std::endl;
+    std::cout << "A shape: " << utils::shape_to_string(a.shape()) << std::endl;
+    std::cout << "B shape: " << utils::shape_to_string(b.shape()) << std::endl;
     
     // Check dimensions
     if (a.shape().size() != 2 || b.shape().size() != 2 || a.shape()[1] != b.shape()[0]) {
-        throw std::runtime_error("Invalid shapes for matrix multiplication");
+        throw std::runtime_error("Invalid shapes for matrix multiplication. A: " + 
+            utils::shape_to_string(a.shape()) + ", B: " + utils::shape_to_string(b.shape()));
     }
 
     const size_t m = a.shape()[0];
     const size_t k = a.shape()[1];
     const size_t n = b.shape()[1];
 
+    std::cout << "Creating output tensor..." << std::endl;
     // Create output tensor and store it in graph
     auto& graph = ComputationGraph::getInstance();
     std::shared_ptr<Tensor<T>> output = std::make_shared<Tensor<T>>(std::vector<size_t>{m, n});
-    output->set_requires_grad(true);  // Always set requires_grad to true
-    output->grad().resize(m * n, T(0));  // Initialize gradient vector
+    output->set_requires_grad(true);
+    output->grad().resize(m * n, T(0));
     
+    std::cout << "Storing tensors in graph..." << std::endl;
     // Store tensors in computation graph
-    graph.storeTensor(a);
-    graph.storeTensor(b);
+    auto stored_a = std::make_shared<Tensor<T>>(a);
+    auto stored_b = std::make_shared<Tensor<T>>(b);
+    graph.storeTensorPtr(stored_a);
+    graph.storeTensorPtr(stored_b);
     graph.storeTensorPtr(output);
 
+    std::cout << "Computing matrix multiplication..." << std::endl;
     auto& output_data = output->data();
-    const auto& a_data = a.data();
-    const auto& b_data = b.data();
+    const auto& a_data = stored_a->data();
+    const auto& b_data = stored_b->data();
 
     // Compute matrix multiplication
     for (size_t i = 0; i < m; ++i) {
@@ -165,12 +173,12 @@ Tensor<T> matmul(const Tensor<T>& a, const Tensor<T>& b) {
         }
     }
 
+    std::cout << "Creating backward node..." << std::endl;
     // Create node for backward pass
-    auto node = std::make_shared<MatMulNode<T>>(a, b, *output);
+    auto node = std::make_shared<MatMulNode<T>>(*stored_a, *stored_b, *output);
     graph.addNode(node);
 
-    //std::cout << "Output requires_grad: " << output->requires_grad() << std::endl;
-    //std::cout << "=== matmul forward completed ===" << std::endl;
+    std::cout << "=== matmul forward completed ===" << std::endl;
     return *output;
 }
 
