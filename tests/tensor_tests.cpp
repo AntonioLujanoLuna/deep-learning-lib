@@ -11,6 +11,7 @@ TEST_CASE("Tensor basic operations") {
     }
 
     SUBCASE("Gradient operations") {
+        tensor.set_requires_grad(true);
         tensor.zero_grad();
         // Verify grad is zeroed
         const auto& grad = tensor.grad();

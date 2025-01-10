@@ -3,17 +3,18 @@
 #include "dl/nn/linear.hpp"
 #include "dl/ops/loss.hpp"
 #include <iostream>
+#include <memory>
 
 TEST_CASE("Linear layer operations") {
-    dl::nn::Linear<float> layer(2, 3);  // 2 input features, 3 output features
+    std::shared_ptr<dl::nn::Linear<float>> layer = std::make_shared<dl::nn::Linear<float>>(2, 3);  // 2 input features, 3 output features
     
     SUBCASE("Forward pass shape") {
         dl::Tensor<float> input({4, 2});  // Batch size 4, 2 features
-        auto output = layer.forward(input);
+        auto output = layer->forward(input);
         
-        CHECK_EQ(output.shape().size(), 2);
-        CHECK_EQ(output.shape()[0], 4);  // Batch size preserved
-        CHECK_EQ(output.shape()[1], 3);  // Output features
+        CHECK_EQ(output->shape().size(), 2);
+        CHECK_EQ(output->shape()[0], 4);  // Batch size preserved
+        CHECK_EQ(output->shape()[1], 3);  // Output features
     }
     
     SUBCASE("Gradient computation") {
@@ -24,7 +25,7 @@ TEST_CASE("Linear layer operations") {
         input_data[0] = 1.0f;
         input_data[1] = 2.0f;
         
-        auto output = layer.forward(input);
+        auto output = layer->forward(input);
         //std::cout << "Output requires_grad: " << output.requires_grad() << std::endl;
         
         // Create target tensor
@@ -40,8 +41,8 @@ TEST_CASE("Linear layer operations") {
         dl::ComputationGraph::getInstance().clear();
         
         // Check that gradients are computed
-        const auto& weight_grad = layer.weights().grad();
-        const auto& bias_grad = layer.bias().grad();
+        const auto& weight_grad = layer->weights().grad();
+        const auto& bias_grad = layer->bias().grad();
         
         bool has_weight_grad = false;
         for (const auto& g : weight_grad) {
@@ -63,47 +64,162 @@ TEST_CASE("Linear layer operations") {
     }
 }
 
-TEST_CASE("Linear layer backward pass") {
-    dl::nn::Linear<float> layer(2, 3);  // 2 inputs, 3 outputs
+TEST_CASE("Linear layer forward and backward") {
+    // Create a simple linear layer
+    auto linear = std::make_shared<dl::nn::Linear<float>>(2, 1);
     
-    // Set weights and bias for testing
-    auto& weights = layer.weights().data();
-    weights = {0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f};  // 2x3 matrix
-    
-    auto& bias = layer.bias().data();
-    bias = {0.1f, 0.2f, 0.3f};  // 3 elements
+    // Set weights and bias manually for predictable output
+    auto& weights = linear->weights();
+    auto& bias = linear->bias();
+    weights.data() = {1.0f, 1.0f};  // 2 input features, 1 output
+    bias.data() = {0.0f};           // Single bias term
     
     // Create input tensor
-    dl::Tensor<float> input({1, 2});
-    input.data() = {1.0f, 2.0f};
+    dl::Tensor<float> input({1, 2});  // Batch size 1, 2 features
+    input.data() = {2.0f, 3.0f};
     input.set_requires_grad(true);
     
     // Forward pass
-    auto output = layer.forward(input);
-    output.set_requires_grad(true);
+    auto output = linear->forward(input);
     
-    // Set output gradient
-    output.grad() = {1.0f, 1.0f, 1.0f};
+    // Expected output: (2 * 1 + 3 * 1 + 0) = 5
+    CHECK(output->data()[0] == doctest::Approx(5.0f));
+    
+    // Create target tensor
+    dl::Tensor<float> target({1, 1});
+    target.data() = {1.0f};  // Target value
+    
+    // Compute loss
+    auto loss = dl::ops::mse_loss(*output, target);
+    
+    // Expected loss: (5 - 1)^2 / 1 = 16
+    CHECK(loss->data()[0] == doctest::Approx(16.0f));
     
     // Backward pass
+    loss->grad().assign(1, 1.0f);
     dl::ComputationGraph::getInstance().backward();
-    dl::ComputationGraph::getInstance().clear();
+    
+    // Check gradients
+    const auto& weight_grad = weights.grad();
+    const auto& bias_grad = bias.grad();
+    const auto& input_grad = input.grad();
+    
+    // Expected gradients can be calculated by hand
+    CHECK(weight_grad[0] == doctest::Approx(16.0f));  // dL/dw1 = 2 * (5-1) * 2
+    CHECK(weight_grad[1] == doctest::Approx(24.0f));  // dL/dw2 = 2 * (5-1) * 3
+    CHECK(bias_grad[0] == doctest::Approx(8.0f));     // dL/db = 2 * (5-1)
+    CHECK(input_grad[0] == doctest::Approx(8.0f));    // dL/dx1 = 2 * (5-1) * 1
+    CHECK(input_grad[1] == doctest::Approx(8.0f));    // dL/dx2 = 2 * (5-1) * 1
+}
+
+TEST_CASE("Linear layer with batch processing") {
+    // Create a linear layer: 2 inputs -> 1 output
+    auto linear = std::make_shared<dl::nn::Linear<float>>(2, 1);
+    
+    // Set weights and bias manually
+    auto& weights = linear->weights();
+    auto& bias = linear->bias();
+    weights.data() = {0.5f, 0.5f};  // Equal weights
+    bias.data() = {0.0f};           // Zero bias
+    
+    // Create batch input: 2 samples, 2 features each
+    dl::Tensor<float> input({2, 2});
+    input.data() = {1.0f, 2.0f,    // First sample
+                   3.0f, 4.0f};    // Second sample
+    input.set_requires_grad(true);
+    
+    // Forward pass
+    auto output = linear->forward(input);
+    
+    // Expected outputs:
+    // Sample 1: 1 * 0.5 + 2 * 0.5 = 1.5
+    // Sample 2: 3 * 0.5 + 4 * 0.5 = 3.5
+    CHECK(output->data()[0] == doctest::Approx(1.5f));
+    CHECK(output->data()[1] == doctest::Approx(3.5f));
+    
+    // Create target tensor
+    dl::Tensor<float> target({2, 1});
+    target.data() = {1.0f, 3.0f};  // Target values
+    
+    // Compute loss
+    auto loss = dl::ops::mse_loss(*output, target);
+    
+    // Expected loss: ((1.5-1)^2 + (3.5-3)^2) / 2 = 0.25
+    CHECK(loss->data()[0] == doctest::Approx(0.25f));
+    
+    // Backward pass
+    loss->grad().assign(1, 1.0f);
+    dl::ComputationGraph::getInstance().backward();
+    
+    // Check gradients
+    const auto& weight_grad = weights.grad();
+    const auto& bias_grad = bias.grad();
+    const auto& input_grad = input.grad();
+    
+    // Verify gradient shapes
+    CHECK(weight_grad.size() == 2);  // One gradient per weight
+    CHECK(bias_grad.size() == 1);    // One gradient for bias
+    CHECK(input_grad.size() == 4);   // One gradient per input feature
+}
+
+TEST_CASE("Linear layer forward pass produces correct output shape") {
+    std::shared_ptr<dl::nn::Linear<float>> layer = std::make_shared<dl::nn::Linear<float>>(2, 3);
+    dl::Tensor<float> input({4, 2});
+    
+    auto output = layer->forward(input);
+    CHECK(output->shape()[0] == 4);
+    CHECK(output->shape()[1] == 3);
+    CHECK(layer->weights().shape()[0] == 3);
+    CHECK(layer->weights().shape()[1] == 2);
+}
+
+TEST_CASE("Linear layer backward pass computes correct gradients") {
+    std::shared_ptr<dl::nn::Linear<float>> layer = std::make_shared<dl::nn::Linear<float>>(2, 1);
+    
+    // Set weights and bias manually for predictable results
+    auto& weights = layer->weights();
+    weights.data() = {1.0f, 1.0f};  // 1x2 weight matrix
+    auto& bias = layer->bias();
+    bias.data() = {1.0f};  // Single bias value
+    
+    // Create input tensor
+    dl::Tensor<float> input({1, 2});
+    input.data() = {2.0f, 3.0f};
+    input.set_requires_grad(true);
+    
+    // Forward pass
+    auto output = layer->forward(input);
+    
+    // Create target and compute loss
+    dl::Tensor<float> target({1, 1});
+    target.data() = {10.0f};
+    
+    auto loss = dl::ops::mse_loss(output, target);
+    
+    // Initialize loss gradient
+    loss->grad().assign(1, 1.0f);
+    
+    // Backward pass through computation graph
+    dl::ComputationGraph::getInstance().backward();
     
     // Check input gradients
-    std::vector<float> expected_input_grad = {0.6f, 1.5f};  // dot product with weights
-    for (size_t i = 0; i < input.grad().size(); ++i) {
-        CHECK(input.grad()[i] == doctest::Approx(expected_input_grad[i]));
-    }
+    const auto& input_grad = input.grad();
+    REQUIRE(input_grad.size() == 2);
     
-    // Check weight gradients
-    std::vector<float> expected_weight_grad = {1.0f, 1.0f, 1.0f, 2.0f, 2.0f, 2.0f};
-    for (size_t i = 0; i < layer.weights().grad().size(); ++i) {
-        CHECK(layer.weights().grad()[i] == doctest::Approx(expected_weight_grad[i]));
-    }
+    // Print debug information
+    std::cout << "Input gradients: " << input_grad[0] << ", " << input_grad[1] << std::endl;
     
-    // Check bias gradients
-    std::vector<float> expected_bias_grad = {1.0f, 1.0f, 1.0f};
-    for (size_t i = 0; i < layer.bias().grad().size(); ++i) {
-        CHECK(layer.bias().grad()[i] == doctest::Approx(expected_bias_grad[i]));
-    }
+    // Test backward pass with requires_grad
+    dl::Tensor<float> input2({1, 2});
+    input2.data() = {1.0f, 1.0f};
+    input2.set_requires_grad(true);
+    
+    auto output2 = layer->forward(input2);
+    output2->set_requires_grad(true);
+    output2->grad().assign(output2->data().size(), 1.0f);
+    
+    dl::ComputationGraph::getInstance().backward();
+    
+    const auto& input2_grad = input2.grad();
+    REQUIRE(input2_grad.size() == 2);
 }

@@ -1,78 +1,116 @@
+#include "dl/tensor.hpp"
 #include "dl/nn/linear.hpp"
-#include "dl/ops/activations.hpp"
 #include "dl/ops/loss.hpp"
-#include "dl/optim/optimizer.hpp"
+#include "dl/ops/activations.hpp"
+#include "dl/ops/matrix_ops.hpp"
 #include <iostream>
 #include <vector>
 #include <random>
+#include <memory>
 #include <iomanip>
 
 // Simple 3-layer MLP for binary classification
 class MLP {
 public:
-    MLP()
-        : layer1(2, 2),  // 2 -> 2
-          layer2(2, 1),  // 2 -> 1
-          h1_(std::vector<size_t>{1, 2}),
-          h1_act_(std::vector<size_t>{1, 2}),
-          out_(std::vector<size_t>{1, 1}),
-          final_(std::vector<size_t>{1, 1})
-    {
-        // For XOR, 2->2->1 is sufficient with non-linear activation
-        // Initialize weights with Xavier/Glorot initialization
-        float scale1 = std::sqrt(2.0f / (2 + 2)); // sqrt(2 / (in_features + out_features))
-        float scale2 = std::sqrt(2.0f / (2 + 1));
+    MLP(size_t input_dim, size_t hidden_dim, size_t output_dim) 
+        : layer1(std::make_shared<dl::nn::Linear<float>>(input_dim, hidden_dim))
+        , layer2(std::make_shared<dl::nn::Linear<float>>(hidden_dim, output_dim)) {
         
-        layer1.init_weights(scale1);
-        layer2.init_weights(scale2);
-
-        // Mark internal tensors as requiring grad if you want to watch them in debug
-        h1_.set_requires_grad(true);
-        h1_.grad().resize(h1_.data().size(), 0.0f);
-        h1_act_.set_requires_grad(true);
-        h1_act_.grad().resize(h1_act_.data().size(), 0.0f);
-        out_.set_requires_grad(true);
-        out_.grad().resize(out_.data().size(), 0.0f);
-        final_.set_requires_grad(true);
-        final_.grad().resize(final_.data().size(), 0.0f);
+        // Ensure all parameters require gradients
+        layer1->weights().set_requires_grad(true);
+        layer1->bias().set_requires_grad(true);
+        layer2->weights().set_requires_grad(true);
+        layer2->bias().set_requires_grad(true);
     }
 
-    dl::Tensor<float> forward(const dl::Tensor<float>& x)
-    {
+    std::shared_ptr<dl::Tensor<float>> forward(const dl::Tensor<float>& x) {
+        std::cout << "\n=== MLP Forward Pass ===" << std::endl;
+        std::cout << "Input dimensions: [" << x.shape()[0] << ", " << x.shape()[1] << "]" << std::endl;
+        
         // First layer
-        h1_ = layer1.forward(x);  
-        h1_.set_requires_grad(true);
-        h1_.grad().resize(h1_.data().size(), 0.0f);
+        auto h1 = layer1->forward(x);  
+        std::cout << "h1 dimensions: [" << h1->shape()[0] << ", " << h1->shape()[1] << "]" << std::endl;
 
         // ReLU activation
-        h1_act_ = dl::ops::relu(h1_);
-        h1_act_.set_requires_grad(true);
-        h1_act_.grad().resize(h1_act_.data().size(), 0.0f);
+        auto h1_act = dl::ops::relu(*h1);
+        std::cout << "h1_act dimensions: [" << h1_act->shape()[0] << ", " << h1_act->shape()[1] << "]" << std::endl;
 
         // Second layer (output)
-        out_ = layer2.forward(h1_act_);
-        out_.set_requires_grad(true);
-        out_.grad().resize(out_.data().size(), 0.0f);
+        auto out = layer2->forward(*h1_act);
+        std::cout << "out dimensions: [" << out->shape()[0] << ", " << out->shape()[1] << "]" << std::endl;
 
         // Sigmoid activation to produce final probability in [0,1]
-        final_ = dl::ops::sigmoid(out_);
-        final_.set_requires_grad(true);
-        final_.grad().resize(final_.data().size(), 0.0f);
+        auto final = dl::ops::sigmoid(*out);  
+        std::cout << "final dimensions: [" << final->shape()[0] << ", " << final->shape()[1] << "]" << std::endl;
 
-        // Return a copy to avoid modifying the internal state
-        return final_;
+        // Print first few values
+        std::cout << "First few output values: ";
+        for (size_t i = 0; i < std::min(size_t(3), final->data().size()); ++i) {
+            std::cout << final->data()[i] << " ";
+        }
+        std::cout << std::endl;
+        
+        return final;
     }
 
-    // The layers
-    dl::nn::Linear<float> layer1;
-    dl::nn::Linear<float> layer2;
+    void zero_grad() {
+        layer1->zero_grad();
+        layer2->zero_grad();
+    }
+
+    std::vector<float> parameters() const {
+        std::vector<float> params;
+        
+        // Get parameters from layer1
+        const auto& w1 = layer1->weights().data();
+        const auto& b1 = layer1->bias().data();
+        params.insert(params.end(), w1.begin(), w1.end());
+        params.insert(params.end(), b1.begin(), b1.end());
+        
+        // Get parameters from layer2
+        const auto& w2 = layer2->weights().data();
+        const auto& b2 = layer2->bias().data();
+        params.insert(params.end(), w2.begin(), w2.end());
+        params.insert(params.end(), b2.begin(), b2.end());
+        
+        return params;
+    }
+
+    void update_parameters(float learning_rate) {
+        // Update layer1 parameters
+        auto& w1 = layer1->weights();
+        auto& b1 = layer1->bias();
+        const auto& w1_grad = w1.grad();
+        const auto& b1_grad = b1.grad();
+        
+        for (size_t i = 0; i < w1.data().size(); ++i) {
+            w1.data()[i] -= learning_rate * w1_grad[i];
+        }
+        for (size_t i = 0; i < b1.data().size(); ++i) {
+            b1.data()[i] -= learning_rate * b1_grad[i];
+        }
+        
+        // Update layer2 parameters
+        auto& w2 = layer2->weights();
+        auto& b2 = layer2->bias();
+        const auto& w2_grad = w2.grad();
+        const auto& b2_grad = b2.grad();
+        
+        for (size_t i = 0; i < w2.data().size(); ++i) {
+            w2.data()[i] -= learning_rate * w2_grad[i];
+        }
+        for (size_t i = 0; i < b2.data().size(); ++i) {
+            b2.data()[i] -= learning_rate * b2_grad[i];
+        }
+    }
+    
+    // Getter methods for debugging
+    const std::shared_ptr<dl::nn::Linear<float>>& get_layer1() const { return layer1; }
+    const std::shared_ptr<dl::nn::Linear<float>>& get_layer2() const { return layer2; }
 
 private:
-    // Minimal internal tensors for storing intermediate outputs
-    dl::Tensor<float> h1_;      // Hidden layer output
-    dl::Tensor<float> h1_act_;  // Hidden activation
-    dl::Tensor<float> out_;     // Raw output of second layer
-    dl::Tensor<float> final_;   // Final (sigmoid) output
+    std::shared_ptr<dl::nn::Linear<float>> layer1;
+    std::shared_ptr<dl::nn::Linear<float>> layer2;
 };
 
 
@@ -105,15 +143,11 @@ int main() {
     std::cout << "Starting MLP training example..." << std::endl;
 
     // Create model and optimizer
-    MLP model;
+    MLP model(2, 2, 1);
     std::cout << "Created MLP" << std::endl;
-    dl::optim::SGD<float> optimizer(0.1f);  // Increased learning rate for faster convergence
+    float learning_rate = 0.1f;  // Increased learning rate for faster convergence
     std::cout << "Created optimizer" << std::endl;
 
-    // Add model parameters to optimizer
-    model.layer1.add_parameters_to_optimizer(optimizer);
-    model.layer2.add_parameters_to_optimizer(optimizer);
-    
     // Generate training data
     std::vector<dl::Tensor<float>> inputs;
     std::vector<dl::Tensor<float>> targets;
@@ -143,79 +177,94 @@ int main() {
         // Process mini-batches
         for (size_t batch_start = 0; batch_start < inputs.size(); batch_start += batch_size) {
             size_t batch_end = std::min(batch_start + batch_size, inputs.size());
-            float batch_size_f = static_cast<float>(batch_end - batch_start);
             
-            // Zero gradients before batch
-            std::cout << "Zeroing gradients..." << std::endl;
-            optimizer.zero_grad();
-            
-            // Clear computation graph before batch
+            // Clear gradients and graph before new batch
+            model.zero_grad();
             dl::ComputationGraph::getInstance().clear();
             
-            // Accumulate gradients over batch
-            float batch_loss = 0.0f;
-            int batch_correct = 0;
+            // Create batch tensors
+            dl::Tensor<float> batch_input({batch_size, 2});
+            dl::Tensor<float> batch_target({batch_size, 1});
             
-            for (size_t i = batch_start; i < batch_end; ++i) {
-                size_t idx = indices[i];
+            // Ensure batch input requires gradients
+            batch_input.set_requires_grad(true);
+            
+            std::cout << "\n=== Processing Batch ===" << std::endl;
+            std::cout << "Batch input dimensions: [" << batch_input.shape()[0] << ", " << batch_input.shape()[1] << "]" << std::endl;
+            std::cout << "Batch target dimensions: [" << batch_target.shape()[0] << ", " << batch_target.shape()[1] << "]" << std::endl;
+            
+            // Fill batch tensors
+            for (size_t i = 0; i < batch_size; ++i) {
+                size_t idx = indices[batch_start + i];
+                const auto& input_data = inputs[idx].data();
+                const auto& target_data = targets[idx].data();
                 
-                // Forward pass
-                std::cout << "Starting forward pass..." << std::endl;
-                dl::Tensor<float> pred = model.forward(inputs[idx]);
-                std::cout << "Forward pass completed" << std::endl;
+                // Copy input data
+                batch_input.data()[i*2] = input_data[0];
+                batch_input.data()[i*2 + 1] = input_data[1];
                 
-                // Compute loss for this batch
-                std::cout << "Computing loss..." << std::endl;
-                dl::Tensor<float> loss = dl::ops::binary_cross_entropy(pred, targets[idx]);
-                std::cout << "Loss computed: " << loss.data()[0] << std::endl;
+                // Copy target data
+                batch_target.data()[i] = target_data[0];
                 
-                // Initialize loss gradient to 1/batch_size
-                loss.set_requires_grad(true);
-                loss.grad().assign(1, 1.0f / batch_size_f);
-                
-                // Backward pass
-                std::cout << "Starting backward pass..." << std::endl;
-                dl::ComputationGraph::getInstance().backward();
-                std::cout << "Backward pass completed" << std::endl;
-                
-                // Track accuracy
-                bool correct_prediction = (pred.data()[0] >= 0.5f) == (targets[idx].data()[0] >= 0.5f);
-                if (correct_prediction) {
-                    batch_correct++;
+                if (i < 3) {  // Print first few samples
+                    std::cout << "Sample " << i << ": input=(" << input_data[0] << "," << input_data[1] 
+                              << "), target=" << target_data[0] << std::endl;
                 }
-                
-                batch_loss += loss.data()[0];
-                
-                // Clear computation graph after each sample
-                dl::ComputationGraph::getInstance().clear();
+            }
+            
+            // Single forward pass for entire batch
+            std::cout << "\nStarting forward pass..." << std::endl;
+            auto pred = model.forward(batch_input);
+            std::cout << "Forward pass completed. Pred dimensions: [" << pred->shape()[0] << ", " << pred->shape()[1] << "]" << std::endl;
+            
+            // Compute loss for entire batch
+            std::cout << "\nComputing loss..." << std::endl;
+            auto loss = dl::ops::binary_cross_entropy(pred, batch_target);
+            std::cout << "Loss computed: " << loss->data()[0] << std::endl;
+            
+            // Initialize loss gradient to 1.0
+            loss->grad().assign(1, 1.0f);
+            std::cout << "\nSet loss gradient to 1.0" << std::endl;
+            
+            // Single backward pass for entire batch
+            std::cout << "\nStarting backward pass..." << std::endl;
+            dl::ComputationGraph::getInstance().backward();
+            std::cout << "Backward pass completed" << std::endl;
+            
+            // Print gradients before optimizer step
+            std::cout << "\nGradients before optimizer step:" << std::endl;
+            for (size_t j = 0; j < std::min(size_t(3), model.get_layer1()->weights().grad().size()); ++j) {
+                std::cout << "Layer 1 grad[" << j << "]: " << model.get_layer1()->weights().grad()[j] << std::endl;
+            }
+            for (size_t j = 0; j < std::min(size_t(3), model.get_layer2()->weights().grad().size()); ++j) {
+                std::cout << "Layer 2 grad[" << j << "]: " << model.get_layer2()->weights().grad()[j] << std::endl;
             }
             
             // Update weights after batch
-            std::cout << "Taking optimizer step..." << std::endl;
-            optimizer.step();
+            std::cout << "\nTaking optimizer step..." << std::endl;
+            model.update_parameters(learning_rate);
             std::cout << "Optimizer step completed" << std::endl;
             
-            // Print weights after update for first batch
-            if (epoch == 0 && batch_start == 0) {
-                std::cout << "\nLayer weights after optimizer.step():" << std::endl;
-                for (size_t j = 0; j < 3; ++j) {
-                    std::cout << "Layer 1 weight[" << j << "]: " << model.layer1.weights().data()[j] << std::endl;
-                    std::cout << "Layer 2 weight[" << j << "]: " << model.layer2.weights().data()[j] << std::endl;
-                }
-                
-                std::cout << "\nGradients after optimizer updated the weights:" << std::endl;
-                for (size_t j = 0; j < 3; ++j) {
-                    std::cout << "Layer 1 grad[" << j << "]: " << model.layer1.weights().grad()[j] << std::endl;
-                    std::cout << "Layer 2 grad[" << j << "]: " << model.layer2.weights().grad()[j] << std::endl;
-                }
+            // Print weights after update
+            std::cout << "\nWeights after optimizer step:" << std::endl;
+            for (size_t j = 0; j < std::min(size_t(3), model.get_layer1()->weights().data().size()); ++j) {
+                std::cout << "Layer 1 weight[" << j << "]: " << model.get_layer1()->weights().data()[j] << std::endl;
+            }
+            for (size_t j = 0; j < std::min(size_t(3), model.get_layer2()->weights().data().size()); ++j) {
+                std::cout << "Layer 2 weight[" << j << "]: " << model.get_layer2()->weights().data()[j] << std::endl;
             }
             
-            // Print gradients after zero_grad for first batch
-            if (epoch == 0 && batch_start == 0) {
-                std::cout << "\nGradients after optimizer.zero_grad():" << std::endl;
-                for (size_t j = 0; j < 3; ++j) {
-                    std::cout << "Layer 1 grad[" << j << "]: " << model.layer1.weights().grad()[j] << std::endl;
-                    std::cout << "Layer 2 grad[" << j << "]: " << model.layer2.weights().grad()[j] << std::endl;
+            // Clear computation graph after batch is complete
+            dl::ComputationGraph::getInstance().clear();
+            
+            // Track accuracy
+            int batch_correct = 0;
+            float batch_loss = loss->data()[0];
+            
+            for (size_t i = 0; i < batch_size; ++i) {
+                bool correct_prediction = (pred->data()[i] >= 0.5f) == (batch_target.data()[i] >= 0.5f);
+                if (correct_prediction) {
+                    batch_correct++;
                 }
             }
             

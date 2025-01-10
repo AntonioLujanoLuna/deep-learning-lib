@@ -24,7 +24,7 @@ namespace detail {
                 throw std::runtime_error("Cannot create tensor with empty shape");
             }
             
-            // Compute total size
+            // Compute total size and validate
             size_t total_size = std::accumulate(shape.begin(), shape.end(), size_t(1), std::multiplies<size_t>());
             if (total_size == 0) {
                 throw std::runtime_error("Cannot create tensor with zero size");
@@ -34,7 +34,10 @@ namespace detail {
             data_.resize(total_size, T(0));
             grad_.resize(total_size, T(0));
             
-            //std::cout << "TensorImpl created with shape: " << utils::shape_to_string(shape_) << ", size: " << total_size << std::endl;
+            // Ensure grad vector is properly initialized
+            if (requires_grad_) {
+                std::fill(grad_.begin(), grad_.end(), T(0));
+            }
         }
 
         const std::vector<T>& data() const { return data_; }
@@ -44,14 +47,11 @@ namespace detail {
             if (shape_.empty()) {
                 throw std::runtime_error("Cannot access gradient: tensor has empty shape");
             }
-            //std::cout << "Accessing gradient (const) for tensor with shape " << utils::shape_to_string(shape_) << std::endl;
-            //std::cout << "requires_grad: " << std::boolalpha << requires_grad_ << std::endl;
-            //std::cout << "grad size: " << grad_.size() << std::endl;
             if (!requires_grad_) {
-                std::cerr << "Warning: Accessing gradient of tensor that doesn't require gradients" << std::endl;
+                throw std::runtime_error("Cannot access gradient: tensor does not require gradients");
             }
             if (grad_.empty()) {
-                std::cerr << "Warning: Gradient vector is empty" << std::endl;
+                throw std::runtime_error("Cannot access gradient: gradient vector is empty");
             }
             return grad_; 
         }
@@ -60,14 +60,13 @@ namespace detail {
             if (shape_.empty()) {
                 throw std::runtime_error("Cannot access gradient: tensor has empty shape");
             }
-            //std::cout << "Accessing gradient (mutable) for tensor with shape " << utils::shape_to_string(shape_) << std::endl;
-            //std::cout << "requires_grad: " << std::boolalpha << requires_grad_ << std::endl;
-            //std::cout << "grad size: " << grad_.size() << std::endl;
+            if (!requires_grad_) {
+                throw std::runtime_error("Cannot access gradient: tensor does not require gradients");
+            }
             
             // Ensure gradient vector has correct size
             size_t total_size = std::accumulate(shape_.begin(), shape_.end(), size_t(1), std::multiplies<size_t>());
             if (grad_.size() != total_size) {
-                //std::cout << "Resizing gradient vector from " << grad_.size() << " to " << total_size << std::endl;
                 grad_.resize(total_size, T(0));
             }
             
@@ -83,15 +82,13 @@ namespace detail {
         
         void set_requires_grad(bool requires_grad) {
             requires_grad_ = requires_grad;
-            //std::cout << "Setting requires_grad to " << std::boolalpha << requires_grad << " for tensor with shape " << utils::shape_to_string(shape_) << std::endl;
             
+            // Handle gradient initialization/deinitialization
             if (requires_grad) {
-                // Ensure gradient vector is properly sized
                 size_t total_size = std::accumulate(shape_.begin(), shape_.end(), size_t(1), std::multiplies<size_t>());
-                if (grad_.size() != total_size) {
-                    //std::cout << "Resizing gradient vector from " << grad_.size() << " to " << total_size << std::endl;
-                    grad_.resize(total_size, T(0));
-                }
+                grad_.resize(total_size, T(0));
+            } else {
+                grad_.clear();  // Free memory if gradients are no longer needed
             }
         }
 
@@ -266,6 +263,7 @@ Tensor<T> Tensor<T>::operator+(const Tensor<T>& other) const {
         result_data[i] = a_data[i] + b_data[i];
     }
     
+    // Set requires_grad and create backward node if either input requires grad
     if (requires_grad() || other.requires_grad()) {
         result.set_requires_grad(true);
         auto node = std::make_shared<ops::AddNode<T>>(*this, other, result);
@@ -296,6 +294,7 @@ Tensor<T> Tensor<T>::operator*(const Tensor<T>& other) const {
         result_data[i] = a_data[i] * b_data[i];
     }
     
+    // Set requires_grad and create backward node if either input requires grad
     if (requires_grad() || other.requires_grad()) {
         result.set_requires_grad(true);
         auto node = std::make_shared<ops::MulNode<T>>(*this, other, result);

@@ -12,13 +12,15 @@ template<typename T>
 class MatMulNode : public Node {
 public:
     MatMulNode(const Tensor<T>& a, const Tensor<T>& b, Tensor<T>& output)
-        : a_(a), b_(b), output_(output) {
-        if (a_.shape().size() != 2 || b_.shape().size() != 2) {
+        : a_(std::make_shared<Tensor<T>>(a))
+        , b_(std::make_shared<Tensor<T>>(b))
+        , output_(std::make_shared<Tensor<T>>(output)) {
+        if (a_->shape().size() != 2 || b_->shape().size() != 2) {
             throw std::runtime_error("MatMul requires 2D tensors");
         }
-        if (a_.shape()[1] != b_.shape()[0]) {
+        if (a_->shape()[1] != b_->shape()[0]) {
             throw std::runtime_error("Invalid shapes for matrix multiplication. A: " + 
-                utils::shape_to_string(a_.shape()) + ", B: " + utils::shape_to_string(b_.shape()));
+                utils::shape_to_string(a_->shape()) + ", B: " + utils::shape_to_string(b_->shape()));
         }
     }
 
@@ -28,13 +30,13 @@ public:
 
     void backward() override {
         std::cout << "\n=== Starting MatMul backward ===" << std::endl;
-        std::cout << "A shape: " << utils::shape_to_string(a_.shape()) << std::endl;
-        std::cout << "B shape: " << utils::shape_to_string(b_.shape()) << std::endl;
-        std::cout << "Output shape: " << utils::shape_to_string(output_.shape()) << std::endl;
+        std::cout << "A shape: " << utils::shape_to_string(a_->shape()) << std::endl;
+        std::cout << "B shape: " << utils::shape_to_string(b_->shape()) << std::endl;
+        std::cout << "Output shape: " << utils::shape_to_string(output_->shape()) << std::endl;
         
-        const auto& out_grad = output_.grad();
-        const auto& a_shape = a_.shape();
-        const auto& b_shape = b_.shape();
+        const auto& out_grad = output_->grad();
+        const auto& a_shape = a_->shape();
+        const auto& b_shape = b_->shape();
         
         // Validate output gradient
         if (out_grad.empty() || out_grad.size() != a_shape[0] * b_shape[1]) {
@@ -50,21 +52,21 @@ public:
         std::cout << std::endl;
         
         // Clear gradients before computing them
-        if (a_.requires_grad()) {
+        if (a_->requires_grad()) {
             std::cout << "Clearing A gradients..." << std::endl;
-            auto& a_grad = const_cast<Tensor<T>&>(a_).grad();
+            auto& a_grad = a_->grad();
             std::fill(a_grad.begin(), a_grad.end(), T(0));
         }
-        if (b_.requires_grad()) {
+        if (b_->requires_grad()) {
             std::cout << "Clearing B gradients..." << std::endl;
-            auto& b_grad = const_cast<Tensor<T>&>(b_).grad();
+            auto& b_grad = b_->grad();
             std::fill(b_grad.begin(), b_grad.end(), T(0));
         }
         
-        if (a_.requires_grad()) {
+        if (a_->requires_grad()) {
             std::cout << "Computing gradients for A" << std::endl;
-            auto& a_grad = const_cast<Tensor<T>&>(a_).grad();
-            const auto& b_data = b_.data();
+            auto& a_grad = a_->grad();
+            const auto& b_data = b_->data();
             
             // Validate gradient size
             if (a_grad.size() != a_shape[0] * a_shape[1]) {
@@ -89,10 +91,10 @@ public:
             std::cout << std::endl;
         }
         
-        if (b_.requires_grad()) {
+        if (b_->requires_grad()) {
             std::cout << "Computing gradients for B" << std::endl;
-            auto& b_grad = const_cast<Tensor<T>&>(b_).grad();
-            const auto& a_data = a_.data();
+            auto& b_grad = b_->grad();
+            const auto& a_data = a_->data();
             
             // Validate gradient size
             if (b_grad.size() != b_shape[0] * b_shape[1]) {
@@ -121,65 +123,54 @@ public:
     }
 
 private:
-    Tensor<T> a_;  // Store by value
-    Tensor<T> b_;  // Store by value
-    Tensor<T>& output_;  // Keep reference since this is managed by computation graph
+    std::shared_ptr<Tensor<T>> a_;
+    std::shared_ptr<Tensor<T>> b_;
+    std::shared_ptr<Tensor<T>> output_;
 };
 
 template<typename T>
-Tensor<T> matmul(const Tensor<T>& a, const Tensor<T>& b) {
-    std::cout << "\n=== Starting matmul forward ===" << std::endl;
-    std::cout << "A shape: " << utils::shape_to_string(a.shape()) << std::endl;
-    std::cout << "B shape: " << utils::shape_to_string(b.shape()) << std::endl;
-    
-    // Check dimensions
-    if (a.shape().size() != 2 || b.shape().size() != 2 || a.shape()[1] != b.shape()[0]) {
-        throw std::runtime_error("Invalid shapes for matrix multiplication. A: " + 
-            utils::shape_to_string(a.shape()) + ", B: " + utils::shape_to_string(b.shape()));
+std::shared_ptr<Tensor<T>> matmul(const Tensor<T>& a, const Tensor<T>& b) {
+    if (a.shape().size() != 2 || b.shape().size() != 2) {
+        throw std::runtime_error("MatMul requires 2D tensors");
+    }
+    if (a.shape()[1] != b.shape()[0]) {
+        throw std::runtime_error("Invalid shapes for matrix multiplication. A: [" + 
+            std::to_string(a.shape()[0]) + ", " + std::to_string(a.shape()[1]) + 
+            "], B: [" + std::to_string(b.shape()[0]) + ", " + std::to_string(b.shape()[1]) + "]");
     }
 
-    const size_t m = a.shape()[0];
-    const size_t k = a.shape()[1];
-    const size_t n = b.shape()[1];
-
-    std::cout << "Creating output tensor..." << std::endl;
-    // Create output tensor and store it in graph
-    auto& graph = ComputationGraph::getInstance();
-    std::shared_ptr<Tensor<T>> output = std::make_shared<Tensor<T>>(std::vector<size_t>{m, n});
+    // Create output tensor
+    auto output = std::make_shared<Tensor<T>>(std::vector<size_t>{a.shape()[0], b.shape()[1]});
     output->set_requires_grad(true);
-    output->grad().resize(m * n, T(0));
-    
-    std::cout << "Storing tensors in graph..." << std::endl;
-    // Store tensors in computation graph
-    auto stored_a = std::make_shared<Tensor<T>>(a);
-    auto stored_b = std::make_shared<Tensor<T>>(b);
-    graph.storeTensorPtr(stored_a);
-    graph.storeTensorPtr(stored_b);
-    graph.storeTensorPtr(output);
+    output->grad().resize(output->data().size(), T(0));
 
-    std::cout << "Computing matrix multiplication..." << std::endl;
+    // Get data references
+    const auto& a_data = a.data();
+    const auto& b_data = b.data();
     auto& output_data = output->data();
-    const auto& a_data = stored_a->data();
-    const auto& b_data = stored_b->data();
 
     // Compute matrix multiplication
-    for (size_t i = 0; i < m; ++i) {
-        for (size_t j = 0; j < n; ++j) {
+    const size_t M = a.shape()[0];  // Rows of A
+    const size_t K = a.shape()[1];  // Cols of A = Rows of B
+    const size_t N = b.shape()[1];  // Cols of B
+
+    for (size_t i = 0; i < M; ++i) {
+        for (size_t j = 0; j < N; ++j) {
             T sum = T(0);
-            for (size_t l = 0; l < k; ++l) {
-                sum += a_data[i * k + l] * b_data[l * n + j];
+            for (size_t k = 0; k < K; ++k) {
+                sum += a_data[i * K + k] * b_data[k * N + j];
             }
-            output_data[i * n + j] = sum;
+            output_data[i * N + j] = sum;
         }
     }
 
-    std::cout << "Creating backward node..." << std::endl;
-    // Create node for backward pass
-    auto node = std::make_shared<MatMulNode<T>>(*stored_a, *stored_b, *output);
-    graph.addNode(node);
+    // Create backward node if needed
+    if (a.requires_grad() || b.requires_grad()) {
+        auto node = std::make_shared<MatMulNode<T>>(a, b, *output);
+        ComputationGraph::getInstance().addNode(node);
+    }
 
-    std::cout << "=== matmul forward completed ===" << std::endl;
-    return *output;
+    return output;
 }
 
 template<typename T>
@@ -187,24 +178,30 @@ class Conv2DNode : public Node {
 public:
     Conv2DNode(const Tensor<T>& input, const Tensor<T>& kernel, 
                Tensor<T>& result, size_t stride, size_t padding)
-        : input_(input), kernel_(kernel), result_(result)
+        : input_(std::make_shared<Tensor<T>>(input))
+        , kernel_(std::make_shared<Tensor<T>>(kernel))
+        , result_(std::make_shared<Tensor<T>>(result))
         , stride_(stride), padding_(padding) {}
 
+    std::string node_type() const override {
+        return "Conv2D";
+    }
+
     void backward() override {
-        const auto& result_grad = result_.grad();
-        const auto& input_shape = input_.shape();
-        const auto& kernel_shape = kernel_.shape();
+        const auto& result_grad = result_->grad();
+        const auto& input_shape = input_->shape();
+        const auto& kernel_shape = kernel_->shape();
         
-        if (input_.requires_grad()) {
-            auto& input_grad = input_.grad();
-            const auto& kernel_data = kernel_.data();
+        if (input_->requires_grad()) {
+            auto& input_grad = input_->grad();
+            const auto& kernel_data = kernel_->data();
             
             // Zero padding for input gradients
             std::vector<T> padded_grad(input_grad.size(), T(0));
             
             // Compute input gradients
-            for (size_t h = 0; h < result_.shape()[2]; ++h) {
-                for (size_t w = 0; w < result_.shape()[3]; ++w) {
+            for (size_t h = 0; h < result_->shape()[2]; ++h) {
+                for (size_t w = 0; w < result_->shape()[3]; ++w) {
                     for (size_t c = 0; c < kernel_shape[1]; ++c) {
                         for (size_t kh = 0; kh < kernel_shape[2]; ++kh) {
                             for (size_t kw = 0; kw < kernel_shape[3]; ++kw) {
@@ -216,7 +213,7 @@ public:
                                              in_h * input_shape[3] + in_w] +=
                                         kernel_data[c * kernel_shape[2] * kernel_shape[3] +
                                                   kh * kernel_shape[3] + kw] *
-                                        result_grad[h * result_.shape()[3] + w];
+                                        result_grad[h * result_->shape()[3] + w];
                                 }
                             }
                         }
@@ -225,13 +222,13 @@ public:
             }
         }
 
-        if (kernel_.requires_grad()) {
-            auto& kernel_grad = kernel_.grad();
-            const auto& input_data = input_.data();
+        if (kernel_->requires_grad()) {
+            auto& kernel_grad = kernel_->grad();
+            const auto& input_data = input_->data();
             
             // Compute kernel gradients
-            for (size_t h = 0; h < result_.shape()[2]; ++h) {
-                for (size_t w = 0; w < result_.shape()[3]; ++w) {
+            for (size_t h = 0; h < result_->shape()[2]; ++h) {
+                for (size_t w = 0; w < result_->shape()[3]; ++w) {
                     for (size_t c = 0; c < kernel_shape[1]; ++c) {
                         for (size_t kh = 0; kh < kernel_shape[2]; ++kh) {
                             for (size_t kw = 0; kw < kernel_shape[3]; ++kw) {
@@ -243,7 +240,7 @@ public:
                                               kh * kernel_shape[3] + kw] +=
                                         input_data[c * input_shape[2] * input_shape[3] +
                                                  in_h * input_shape[3] + in_w] *
-                                        result_grad[h * result_.shape()[3] + w];
+                                        result_grad[h * result_->shape()[3] + w];
                                 }
                             }
                         }
@@ -254,9 +251,9 @@ public:
     }
 
 private:
-    Tensor<T> input_;  // Store by value to keep tensors alive
-    Tensor<T> kernel_;
-    Tensor<T> result_;
+    std::shared_ptr<Tensor<T>> input_;
+    std::shared_ptr<Tensor<T>> kernel_;
+    std::shared_ptr<Tensor<T>> result_;
     size_t stride_;
     size_t padding_;
 };
