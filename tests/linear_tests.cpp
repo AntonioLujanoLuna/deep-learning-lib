@@ -6,6 +6,7 @@
 #include <memory>
 
 TEST_CASE("Linear layer operations") {
+    dl::ComputationGraph::getInstance().clear();  // Clear graph before test
     std::shared_ptr<dl::nn::Linear<float>> layer = std::make_shared<dl::nn::Linear<float>>(2, 3);  // 2 input features, 3 output features
     
     SUBCASE("Forward pass shape") {
@@ -20,6 +21,10 @@ TEST_CASE("Linear layer operations") {
     SUBCASE("Gradient computation") {
         dl::Tensor<float> input({1, 2});  // Single input
         input.set_requires_grad(true);
+        
+        // Set requires_grad on weights and bias
+        layer->weights().set_requires_grad(true);
+        layer->bias().set_requires_grad(true);
         
         auto& input_data = input.data();
         input_data[0] = 1.0f;
@@ -36,6 +41,16 @@ TEST_CASE("Linear layer operations") {
         target_data[2] = 1.0f;
         
         auto loss = dl::ops::mse_loss(output, target);
+        
+        // Initialize loss gradient
+        loss->grad().assign(1, 1.0f);
+        
+        std::cout << "Before backward pass:" << std::endl;
+        std::cout << "Loss requires_grad: " << loss->requires_grad() << std::endl;
+        std::cout << "Output requires_grad: " << output->requires_grad() << std::endl;
+        std::cout << "Input requires_grad: " << input.requires_grad() << std::endl;
+        std::cout << "Weights requires_grad: " << layer->weights().requires_grad() << std::endl;
+        std::cout << "Bias requires_grad: " << layer->bias().requires_grad() << std::endl;
         
         dl::ComputationGraph::getInstance().backward();
         dl::ComputationGraph::getInstance().clear();
@@ -65,6 +80,7 @@ TEST_CASE("Linear layer operations") {
 }
 
 TEST_CASE("Linear layer forward and backward") {
+    dl::ComputationGraph::getInstance().clear();  // Clear graph before test
     // Create a simple linear layer
     auto linear = std::make_shared<dl::nn::Linear<float>>(2, 1);
     
@@ -95,8 +111,10 @@ TEST_CASE("Linear layer forward and backward") {
     // Expected loss: (5 - 1)^2 / 1 = 16
     CHECK(loss->data()[0] == doctest::Approx(16.0f));
     
-    // Backward pass
+    // Initialize loss gradient
     loss->grad().assign(1, 1.0f);
+    
+    // Backward pass
     dl::ComputationGraph::getInstance().backward();
     
     // Check gradients
@@ -113,6 +131,7 @@ TEST_CASE("Linear layer forward and backward") {
 }
 
 TEST_CASE("Linear layer with batch processing") {
+    dl::ComputationGraph::getInstance().clear();  // Clear graph before test
     // Create a linear layer: 2 inputs -> 1 output
     auto linear = std::make_shared<dl::nn::Linear<float>>(2, 1);
     
@@ -147,8 +166,10 @@ TEST_CASE("Linear layer with batch processing") {
     // Expected loss: ((1.5-1)^2 + (3.5-3)^2) / 2 = 0.25
     CHECK(loss->data()[0] == doctest::Approx(0.25f));
     
-    // Backward pass
+    // Initialize loss gradient
     loss->grad().assign(1, 1.0f);
+    
+    // Backward pass
     dl::ComputationGraph::getInstance().backward();
     
     // Check gradients
@@ -163,6 +184,7 @@ TEST_CASE("Linear layer with batch processing") {
 }
 
 TEST_CASE("Linear layer forward pass produces correct output shape") {
+    dl::ComputationGraph::getInstance().clear();  // Clear graph before test
     std::shared_ptr<dl::nn::Linear<float>> layer = std::make_shared<dl::nn::Linear<float>>(2, 3);
     dl::Tensor<float> input({4, 2});
     
@@ -174,13 +196,17 @@ TEST_CASE("Linear layer forward pass produces correct output shape") {
 }
 
 TEST_CASE("Linear layer backward pass computes correct gradients") {
+    dl::ComputationGraph::getInstance().clear();  // Clear graph before test
     std::shared_ptr<dl::nn::Linear<float>> layer = std::make_shared<dl::nn::Linear<float>>(2, 1);
     
     // Set weights and bias manually for predictable results
     auto& weights = layer->weights();
     weights.data() = {1.0f, 1.0f};  // 1x2 weight matrix
+    weights.set_requires_grad(true);
+    
     auto& bias = layer->bias();
     bias.data() = {1.0f};  // Single bias value
+    bias.set_requires_grad(true);
     
     // Create input tensor
     dl::Tensor<float> input({1, 2});

@@ -25,7 +25,7 @@ public:
     }
 
     void backward() override {
-        std::cout << "\n=== Starting ReLU backward ===" << std::endl;
+        //std::cout << "\n=== Starting ReLU backward ===" << std::endl;
         if (!input_tensor_->requires_grad()) {
             std::cout << "Input does not require gradients, skipping backward" << std::endl;
             return;
@@ -35,10 +35,10 @@ public:
         const auto& output_grad = output_tensor_->grad();
         const auto& input_data = input_tensor_->data();
 
-        std::cout << "Input shape: " << utils::shape_to_string(input_tensor_->shape()) << std::endl;
-        std::cout << "Output grad shape: " << utils::shape_to_string(output_tensor_->shape()) << std::endl;
-        std::cout << "Input grad size: " << input_grad.size() << std::endl;
-        std::cout << "Output grad size: " << output_grad.size() << std::endl;
+        //std::cout << "Input shape: " << utils::shape_to_string(input_tensor_->shape()) << std::endl;
+        //std::cout << "Output grad shape: " << utils::shape_to_string(output_tensor_->shape()) << std::endl;
+        //std::cout << "Input grad size: " << input_grad.size() << std::endl;
+        //std::cout << "Output grad size: " << output_grad.size() << std::endl;
 
         // Initialize gradient if needed
         if (input_grad.size() != input_data.size()) {
@@ -50,12 +50,12 @@ public:
             input_grad[i] = (input_data[i] > T(0)) ? output_grad[i] : T(0);  // Use = instead of += since we're setting the gradient
         }
 
-        std::cout << "First few input grads after ReLU backward: ";
-        for (size_t i = 0; i < std::min(size_t(3), input_grad.size()); ++i) {
-            std::cout << input_grad[i] << " ";
-        }
-        std::cout << std::endl;
-        std::cout << "=== ReLU backward completed ===" << std::endl;
+        //std::cout << "First few input grads after ReLU backward: ";
+        //for (size_t i = 0; i < std::min(size_t(3), input_grad.size()); ++i) {
+            //std::cout << input_grad[i] << " ";
+        //}
+        //std::cout << std::endl;
+        //std::cout << "=== ReLU backward completed ===" << std::endl;
     }
 
 private:
@@ -75,16 +75,16 @@ public:
     }
 
     void backward() override {
-        std::cout << "\n=== Starting Sigmoid backward ===" << std::endl;
+        //std::cout << "\n=== Starting Sigmoid backward ===" << std::endl;
         if (input_tensor_->requires_grad()) {
-            std::cout << "Input tensor requires gradients" << std::endl;
+            //std::cout << "Input tensor requires gradients" << std::endl;
             
-            std::cout << "Input tensor state:" << std::endl;
-            std::cout << "  Shape: [" << input_tensor_->shape()[0] << ", " << input_tensor_->shape()[1] << "]" << std::endl;
-            std::cout << "  Data size: " << input_tensor_->data().size() << std::endl;
+            //std::cout << "Input tensor state:" << std::endl;
+            //std::cout << "  Shape: [" << input_tensor_->shape()[0] << ", " << input_tensor_->shape()[1] << "]" << std::endl;
+            //std::cout << "  Data size: " << input_tensor_->data().size() << std::endl;
             
             auto& input_grad = input_tensor_->grad();
-            std::cout << "  Grad size: " << input_grad.size() << std::endl;
+            //std::cout << "  Grad size: " << input_grad.size() << std::endl;
             
             const auto& output_grad = output_tensor_->grad();
             const auto& output_data = output_tensor_->data();
@@ -100,13 +100,13 @@ public:
                 input_grad[i] = output_grad[i] * sigmoid_x * (T(1) - sigmoid_x);  // Use = instead of += since we're setting the gradient
             }
             
-            std::cout << "First few input grads after Sigmoid backward: ";
-            for (size_t i = 0; i < std::min(size_t(3), input_grad.size()); ++i) {
-                std::cout << input_grad[i] << " ";
-            }
-            std::cout << std::endl;
+            //std::cout << "First few input grads after Sigmoid backward: ";
+            //for (size_t i = 0; i < std::min(size_t(3), input_grad.size()); ++i) {
+            //    std::cout << input_grad[i] << " ";
+            //}
+            //std::cout << std::endl;
         }
-        std::cout << "=== Sigmoid backward completed ===" << std::endl;
+        //std::cout << "=== Sigmoid backward completed ===" << std::endl;
     }
 
 private:

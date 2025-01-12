@@ -1,6 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 #include "dl/tensor.hpp"
+#include "dl/autograd.hpp"
 
 TEST_CASE("Tensor basic operations") {
     dl::Tensor<float> tensor({2, 3}); // Create a 2x3 tensor
