@@ -1,17 +1,13 @@
-add_library(dl
-    tensor.cpp
-)
+add_library(dl INTERFACE)
 
 target_include_directories(dl
-    PUBLIC
+    INTERFACE
         ${PROJECT_SOURCE_DIR}/include
 )
 
 # Set up installation
 install(TARGETS dl
-    LIBRARY DESTINATION lib
-    ARCHIVE DESTINATION lib
-    RUNTIME DESTINATION bin
+    EXPORT dlTargets
 )
 
 install(DIRECTORY ${PROJECT_SOURCE_DIR}/include/
