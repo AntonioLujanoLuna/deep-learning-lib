@@ -2,7 +2,7 @@
 
 #include "../tensor.hpp"
 #include "../autograd.hpp"
-#include "../utils.hpp"
+#include "../utils/utils.hpp"
 #include <stdexcept>
 #include <memory>
 

@@ -1,8 +1,9 @@
 #pragma once
 
+#include "tensor_error.hpp"
 #include <vector>
-#include <memory>
-#include <stdexcept>
+#include <numeric>
+#include <algorithm>
 
 namespace dl {
 namespace detail {
@@ -10,53 +11,55 @@ namespace detail {
 template<typename T>
 class TensorImpl {
 public:
-    TensorImpl(const std::vector<size_t>& shape)
+    using Shape = std::vector<size_t>;
+    using Data = std::vector<T>;
+
+    explicit TensorImpl(const Shape& shape)
         : shape_(shape)
         , requires_grad_(false) {
-        size_t size = 1;
-        for (size_t dim : shape) {
-            size *= dim;
-        }
-        data_.resize(size);
+        validate_shape(shape);
+        allocate_data();
     }
 
-    TensorImpl(const std::vector<size_t>& shape, const std::vector<T>& data)
+    TensorImpl(const Shape& shape, const Data& data)
         : shape_(shape)
         , data_(data)
         , requires_grad_(false) {
-        size_t expected_size = 1;
-        for (size_t dim : shape) {
-            expected_size *= dim;
-        }
-        if (data.size() != expected_size) {
-            throw std::runtime_error("Data size does not match shape");
-        }
+        validate_shape(shape);
+        validate_data_size();
     }
 
-    const std::vector<size_t>& shape() const { return shape_; }
-    std::vector<T>& data() { return data_; }
-    const std::vector<T>& data() const { return data_; }
-    std::vector<T>& grad() { 
-        if (!requires_grad_) {
-            throw std::runtime_error("Tensor does not require gradients");
-        }
-        if (grad_.empty()) {
-            grad_.resize(data_.size(), T(0));
-        }
+    // Move constructors
+    TensorImpl(TensorImpl&&) noexcept = default;
+    TensorImpl& operator=(TensorImpl&&) noexcept = default;
+
+    // Copy constructors
+    TensorImpl(const TensorImpl&) = default;
+    TensorImpl& operator=(const TensorImpl&) = default;
+
+    // Core accessors
+    const Shape& shape() const noexcept { return shape_; }
+    Data& data() noexcept { return data_; }
+    const Data& data() const noexcept { return data_; }
+    
+    // Gradient operations
+    Data& grad() { 
+        check_requires_grad();
+        ensure_grad_initialized();
         return grad_; 
     }
-    const std::vector<T>& grad() const { 
-        if (!requires_grad_) {
-            throw std::runtime_error("Tensor does not require gradients");
-        }
+    
+    const Data& grad() const { 
+        check_requires_grad();
         return grad_; 
     }
 
-    bool requires_grad() const { return requires_grad_; }
+    bool requires_grad() const noexcept { return requires_grad_; }
+    
     void set_requires_grad(bool requires_grad) { 
         requires_grad_ = requires_grad; 
         if (requires_grad) {
-            grad_.resize(data_.size(), T(0));
+            ensure_grad_initialized();
         }
     }
 
@@ -66,11 +69,59 @@ public:
         }
     }
 
+    // Utility functions
+    size_t num_elements() const noexcept {
+        return data_.size();
+    }
+
+    size_t num_dimensions() const noexcept {
+        return shape_.size();
+    }
+
 private:
-    std::vector<size_t> shape_;
-    std::vector<T> data_;
-    std::vector<T> grad_;
+    Shape shape_;
+    Data data_;
+    Data grad_;
     bool requires_grad_;
+
+    void validate_shape(const Shape& shape) {
+        if (shape.empty()) {
+            throw TensorError("Empty shape is not allowed");
+        }
+        for (size_t dim : shape) {
+            if (dim == 0) {
+                throw TensorError("Zero dimension is not allowed");
+            }
+        }
+    }
+
+    void validate_data_size() {
+        size_t expected_size = compute_size();
+        if (data_.size() != expected_size) {
+            throw TensorError("Data size does not match shape");
+        }
+    }
+
+    size_t compute_size() const {
+        return std::accumulate(shape_.begin(), shape_.end(), 
+                             size_t(1), std::multiplies<size_t>());
+    }
+
+    void allocate_data() {
+        data_.resize(compute_size());
+    }
+
+    void ensure_grad_initialized() {
+        if (grad_.empty()) {
+            grad_.resize(data_.size(), T(0));
+        }
+    }
+
+    void check_requires_grad() const {
+        if (!requires_grad_) {
+            throw TensorError("Tensor does not require gradients");
+        }
+    }
 };
 
 } // namespace detail

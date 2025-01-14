@@ -1,11 +1,14 @@
 #pragma once
 
+#include "../tensor.hpp"
 #include "../autograd.hpp"
+#include "../utils/utils.hpp"
 #include <memory>
 #include <vector>
 #include <string>
 
 namespace dl {
+namespace ops {
 
 // Forward declarations
 template<typename T> class Tensor;
@@ -13,8 +16,6 @@ template<typename T> class Tensor;
 namespace detail {
 template<typename T> class TensorImpl;
 }
-
-namespace ops {
 
 template<typename T>
 class AddNode : public Node {

@@ -3,11 +3,11 @@
 #include "detail/tensor_impl.hpp"
 #include <memory>
 #include <vector>
-#include <stdexcept>
-#include <iostream>
+#include <utility>
+
+namespace dl {
 
 // Forward declarations
-namespace dl {
 namespace ops {
 template<typename T> class AddNode;
 template<typename T> class MulNode;
@@ -15,126 +15,94 @@ template<typename T> class MatMulNode;
 template<typename T> class ReLUNode;
 template<typename T> class SigmoidNode;
 template<typename T> class TanhNode;
-}
-
-namespace nn {
-template<typename T> class LinearNode;
+template<typename T> class SumNode;
+template<typename T> class MeanNode;
+template<typename T> class MaxNode;
+template<typename T> class SliceNode;
 }
 
 template<typename T>
 class Tensor {
 public:
+    // Type aliases for clarity
     using TensorPtr = std::shared_ptr<detail::TensorImpl<T>>;
+    using Shape = std::vector<size_t>;
+    using Data = std::vector<T>;
+    using Range = std::pair<size_t, size_t>;
 
-    Tensor(const std::vector<size_t>& shape)
+    // Constructors
+    explicit Tensor(const Shape& shape)
         : impl_(std::make_shared<detail::TensorImpl<T>>(shape)) {}
 
-    Tensor(const std::vector<size_t>& shape, const std::vector<T>& data)
+    Tensor(const Shape& shape, const Data& data)
         : impl_(std::make_shared<detail::TensorImpl<T>>(shape, data)) {}
+    
+    // Move constructors and assignment
+    Tensor(Tensor&&) noexcept = default;
+    Tensor& operator=(Tensor&&) noexcept = default;
+    
+    // Copy constructors and assignment
+    Tensor(const Tensor&) = default;
+    Tensor& operator=(const Tensor&) = default;
 
-    Tensor(const Tensor& other) = default;
-    Tensor& operator=(const Tensor& other) = default;
-
-    const std::vector<size_t>& shape() const { return impl_->shape(); }
-    std::vector<T>& data() { return impl_->data(); }
-    const std::vector<T>& data() const { return impl_->data(); }
-    std::vector<T>& grad() { return impl_->grad(); }
-    const std::vector<T>& grad() const { return impl_->grad(); }
-
-    bool requires_grad() const { return impl_->requires_grad(); }
+    // Core accessors
+    const Shape& shape() const noexcept { return impl_->shape(); }
+    Data& data() { return impl_->data(); }
+    const Data& data() const { return impl_->data(); }
+    
+    // Gradient operations
+    Data& grad() { return impl_->grad(); }
+    const Data& grad() const { return impl_->grad(); }
+    bool requires_grad() const noexcept { return impl_->requires_grad(); }
     void set_requires_grad(bool requires_grad) { impl_->set_requires_grad(requires_grad); }
     void zero_grad() { impl_->zero_grad(); }
 
-    // Forward declarations of operators
-    Tensor<T> operator+(const Tensor<T>& other) const;
-    Tensor<T> operator*(const Tensor<T>& other) const;
+    // Utility functions
+    size_t num_elements() const noexcept { return impl_->num_elements(); }
+    size_t num_dimensions() const noexcept { return impl_->num_dimensions(); }
+
+    // Basic operations
+    Tensor operator+(const Tensor& other) const;
+    Tensor operator*(const Tensor& other) const;
+    Tensor matmul(const Tensor& other) const;
+
+    // Reduction operations
+    Tensor sum(int dim = -1) const;
+    Tensor mean(int dim = -1) const;
+    Tensor max(int dim = -1) const;
+
+    // Slicing operations
+    Tensor slice(const std::vector<Range>& ranges) const;
+    Tensor operator[](size_t index) const;
+
+protected:
+    // Protected constructor for operations
+    explicit Tensor(TensorPtr impl) : impl_(std::move(impl)) {}
 
 private:
     TensorPtr impl_;
 
-    // Give access to operation nodes
+    // Friend declarations only for core operation classes
     template<typename U> friend class ops::AddNode;
     template<typename U> friend class ops::MulNode;
     template<typename U> friend class ops::MatMulNode;
     template<typename U> friend class ops::ReLUNode;
     template<typename U> friend class ops::SigmoidNode;
     template<typename U> friend class ops::TanhNode;
-    template<typename U> friend class nn::LinearNode;
+    template<typename U> friend class ops::SumNode;
+    template<typename U> friend class ops::MeanNode;
+    template<typename U> friend class ops::MaxNode;
+    template<typename U> friend class ops::SliceNode;
 };
-
-} // namespace dl
-
-// Include operator implementations after Tensor class definition
-#include "ops/basic_ops.hpp"
-#include "ops/broadcast.hpp"
-#include "dl/autograd.hpp"
-
-namespace dl {
-
-template<typename T>
-Tensor<T> Tensor<T>::operator+(const Tensor<T>& other) const {
-    if (!impl_ || !other.impl_) {
-        throw std::runtime_error("Tensor implementation is null");
-    }
-
-    auto broadcast_shape = ops::compute_broadcast_shape(shape(), other.shape());
-    
-    // Broadcast inputs if necessary
-    std::vector<T> a_data = (shape() == broadcast_shape) ? 
-        data() : ops::broadcast_to(data(), shape(), broadcast_shape);
-    std::vector<T> b_data = (other.shape() == broadcast_shape) ? 
-        other.data() : ops::broadcast_to(other.data(), other.shape(), broadcast_shape);
-    
-    Tensor<T> result(broadcast_shape);
-    auto& result_data = result.data();
-    
-    for (size_t i = 0; i < result_data.size(); ++i) {
-        result_data[i] = a_data[i] + b_data[i];
-    }
-    
-    // Set requires_grad and create backward node if either input requires grad
-    if (requires_grad() || other.requires_grad()) {
-        result.set_requires_grad(true);
-        auto node = std::make_shared<ops::AddNode<T>>(*this, other, result);
-        ComputationGraph::getInstance().addNode(node);
-    }
-    
-    return result;
-}
-
-template<typename T>
-Tensor<T> Tensor<T>::operator*(const Tensor<T>& other) const {
-    if (!impl_ || !other.impl_) {
-        throw std::runtime_error("Tensor implementation is null");
-    }
-
-    auto broadcast_shape = ops::compute_broadcast_shape(shape(), other.shape());
-    
-    // Broadcast inputs if necessary
-    std::vector<T> a_data = (shape() == broadcast_shape) ? 
-        data() : ops::broadcast_to(data(), shape(), broadcast_shape);
-    std::vector<T> b_data = (other.shape() == broadcast_shape) ? 
-        other.data() : ops::broadcast_to(other.data(), other.shape(), broadcast_shape);
-    
-    Tensor<T> result(broadcast_shape);
-    auto& result_data = result.data();
-    
-    for (size_t i = 0; i < result_data.size(); ++i) {
-        result_data[i] = a_data[i] * b_data[i];
-    }
-    
-    // Set requires_grad and create backward node if either input requires grad
-    if (requires_grad() || other.requires_grad()) {
-        result.set_requires_grad(true);
-        auto node = std::make_shared<ops::MulNode<T>>(*this, other, result);
-        ComputationGraph::getInstance().addNode(node);
-    }
-    
-    return result;
-}
 
 // Template instantiations for commonly used types
 template class Tensor<float>;
 template class Tensor<double>;
 
 } // namespace dl
+
+// Include operation implementations
+#include "ops/basic_ops.hpp"
+#include "ops/matrix_ops.hpp"
+#include "ops/reduction_ops.hpp"
+#include "ops/slice_ops.hpp"
