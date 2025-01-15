@@ -1,12 +1,40 @@
-# Build directory
+# Build directories
 build/
+[Dd]ebug/
+[Rr]elease/
+x64/
+_deps/
 
-# IDE specific files
-.vscode/
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+**/CMakeFiles/
+*.vcxproj
+*.vcxproj.filters
+*.sln
+ZERO_CHECK.vcxproj
+ALL_BUILD.vcxproj
+INSTALL.vcxproj
+RUN_TESTS.vcxproj
+Testing/
+install_manifest.txt
+compile_commands.json
+
+# Visual Studio files
 .vs/
 *.suo
 *.user
 *.sln.docstates
+*.vcxproj.*
+*.tlog/
+*.lastbuildstate
+*.recipe
+*.ilk
+*.pdb
+*.obj
+*.idb
 
 # Compiled Object files
 *.slo
@@ -34,12 +62,6 @@ build/
 *.out
 *.app
 
-# CMake
-CMakeCache.txt
-CMakeFiles/
-cmake_install.cmake
-install_manifest.txt
-
 # OS generated files
 .DS_Store
 .DS_Store?
@@ -49,5 +71,21 @@ install_manifest.txt
 ehthumbs.db
 Thumbs.db
 
-# Help files
+# Project specific files
 all_code.txt
+project_files.txt
+*.log
+
+# Visual Studio specific directories
+**/x64/
+**/Debug/
+**/Release/
+**/.vs/
+
+# Generated test outputs
+**/test_output/
+Testing/Temporary/
+
+# Script generated files
+copy.ps1
+check_repo.ps1
