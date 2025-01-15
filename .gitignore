@@ -48,3 +48,6 @@ install_manifest.txt
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Help files
+all_code.txt
