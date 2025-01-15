@@ -5,6 +5,8 @@
 #include <iostream>
 #include <memory>
 
+using namespace dl::ops;
+
 TEST_CASE("Linear layer operations") {
     dl::ComputationGraph::getInstance().clear();  // Clear graph before test
     std::shared_ptr<dl::nn::Linear<float>> layer = std::make_shared<dl::nn::Linear<float>>(2, 3);  // 2 input features, 3 output features
@@ -31,7 +33,6 @@ TEST_CASE("Linear layer operations") {
         input_data[1] = 2.0f;
         
         auto output = layer->forward(input);
-        //std::cout << "Output requires_grad: " << output.requires_grad() << std::endl;
         
         // Create target tensor
         dl::Tensor<float> target({1, 3});
@@ -44,13 +45,6 @@ TEST_CASE("Linear layer operations") {
         
         // Initialize loss gradient
         loss->grad().assign(1, 1.0f);
-        
-        std::cout << "Before backward pass:" << std::endl;
-        std::cout << "Loss requires_grad: " << loss->requires_grad() << std::endl;
-        std::cout << "Output requires_grad: " << output->requires_grad() << std::endl;
-        std::cout << "Input requires_grad: " << input.requires_grad() << std::endl;
-        std::cout << "Weights requires_grad: " << layer->weights().requires_grad() << std::endl;
-        std::cout << "Bias requires_grad: " << layer->bias().requires_grad() << std::endl;
         
         dl::ComputationGraph::getInstance().backward();
         dl::ComputationGraph::getInstance().clear();
@@ -231,10 +225,7 @@ TEST_CASE("Linear layer backward pass computes correct gradients") {
     // Check input gradients
     const auto& input_grad = input.grad();
     REQUIRE(input_grad.size() == 2);
-    
-    // Print debug information
-    std::cout << "Input gradients: " << input_grad[0] << ", " << input_grad[1] << std::endl;
-    
+        
     // Test backward pass with requires_grad
     dl::Tensor<float> input2({1, 2});
     input2.data() = {1.0f, 1.0f};

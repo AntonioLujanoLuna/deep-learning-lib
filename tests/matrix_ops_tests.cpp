@@ -3,6 +3,8 @@
 #include "dl/tensor.hpp"
 #include "dl/ops/matrix_ops.hpp"
 
+using namespace dl::ops;
+
 TEST_CASE("Matrix operations") {
     dl::Tensor<float> a({2, 3});
     dl::Tensor<float> b({3, 2});
