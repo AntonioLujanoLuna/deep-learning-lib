@@ -43,7 +43,10 @@ TEST_CASE("ReLU activation function") {
     
     // Test backward pass
     output->grad().assign(output->data().size(), 1.0f);
-    dl::ComputationGraph::getInstance().backward();
+
+    if (auto final_node = output.gradFn().lock()) {
+        dl::ComputationGraph::getInstance().backward(final_node);
+    }
     
     const auto& input_grad = input.grad();
     CHECK(input_grad[0] == doctest::Approx(0.0f));  // grad = 0 for x < 0
@@ -68,7 +71,10 @@ TEST_CASE("Sigmoid activation function") {
     
     // Test backward pass
     output->grad().assign(output->data().size(), 1.0f);
-    dl::ComputationGraph::getInstance().backward();
+
+    if (auto final_node = output.gradFn().lock()) {
+        dl::ComputationGraph::getInstance().backward(final_node);
+    }
     
     const auto& input_grad = input.grad();
     CHECK(input_grad.size() == 4);
@@ -88,7 +94,9 @@ TEST_CASE("Binary Cross Entropy Loss") {
     
     // Test backward pass
     loss->grad().assign(1, 1.0f);
-    dl::ComputationGraph::getInstance().backward();
+    if (auto final_node = loss.gradFn().lock()) {
+        dl::ComputationGraph::getInstance().backward(final_node);
+    }
     
     const auto& pred_grad = predicted.grad();
     CHECK(pred_grad.size() == 4);

@@ -63,7 +63,9 @@ TEST_CASE("Matrix operations") {
         c->grad().assign(c->data().size(), 1.0f);
         
         // Backward pass
-        dl::ComputationGraph::getInstance().backward();
+        if (auto final_node = c.gradFn().lock()) {
+            dl::ComputationGraph::getInstance().backward(final_node);
+        }        
         dl::ComputationGraph::getInstance().clear();
         
         // Check gradients
@@ -128,7 +130,9 @@ TEST_CASE("Matrix multiplication backward pass computes correct gradients") {
     c->set_requires_grad(true);
     c->grad().assign(c->data().size(), 1.0f);
     
-    dl::ComputationGraph::getInstance().backward();
+    if (auto final_node = c.gradFn().lock()) {
+        dl::ComputationGraph::getInstance().backward(final_node);
+    }
     
     // Check that gradients were computed
     CHECK(a.grad().size() > 0);

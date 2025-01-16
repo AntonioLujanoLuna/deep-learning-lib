@@ -1,7 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
-#include "dl/tensor.hpp"
-#include "dl/autograd.hpp"
+#include "dl/dl.hpp"
+
 
 TEST_CASE("Tensor basic operations") {
     dl::Tensor<float> tensor({2, 3}); // Create a 2x3 tensor
@@ -60,7 +60,9 @@ TEST_CASE("Tensor arithmetic operations") {
         b.zero_grad();
         auto c = a + b;
         c.grad()[0] = 1.0f;  // Set initial gradient
-        dl::ComputationGraph::getInstance().backward();
+        if (auto final_node = (*c).gradFn().lock()) {
+            dl::ComputationGraph::getInstance().backward(final_node);
+        }
         dl::ComputationGraph::getInstance().clear();
         
         // Gradients should flow equally to both inputs
@@ -73,7 +75,9 @@ TEST_CASE("Tensor arithmetic operations") {
         b.zero_grad();
         auto c = a * b;
         c.grad()[0] = 1.0f;  // Set initial gradient
-        dl::ComputationGraph::getInstance().backward();
+        if (auto final_node = (*c).gradFn().lock()) {
+            dl::ComputationGraph::getInstance().backward(final_node);
+        }
         dl::ComputationGraph::getInstance().clear();
         
         // Gradient of a*b with respect to a is b
@@ -92,7 +96,9 @@ TEST_CASE("Tensor backward pass") {
     y.set_requires_grad(true);
     y.grad()[0] = 1.0f;  // Set initial gradient
 
-    dl::ComputationGraph::getInstance().backward();
+    if (auto final_node = (*y).gradFn().lock()) {
+        dl::ComputationGraph::getInstance().backward(final_node);
+    }    
     dl::ComputationGraph::getInstance().clear();
 
     CHECK(x.grad()[0] == doctest::Approx(4.0f));  // dy/dx = 2x = 4
@@ -107,7 +113,9 @@ TEST_CASE("Tensor backward pass with multiple operations") {
     y.set_requires_grad(true);
     y.grad()[0] = 1.0f;  // Set initial gradient
 
-    dl::ComputationGraph::getInstance().backward();
+    if (auto final_node = (*y).gradFn().lock()) {
+        dl::ComputationGraph::getInstance().backward(final_node);
+    }
     dl::ComputationGraph::getInstance().clear();
 
     CHECK(x.grad()[0] == doctest::Approx(5.0f));  // dy/dx = 2x + 1 = 5

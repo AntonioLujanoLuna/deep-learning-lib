@@ -89,7 +89,9 @@ int main() {
             auto pred = model.forward(batch_input);
             auto loss = dl::ops::binary_cross_entropy(pred, batch_target);
             loss->grad().assign(1, 1.0f);
-            dl::ComputationGraph::getInstance().backward();
+            if (auto final_node = (*loss).gradFn().lock()) {
+                dl::ComputationGraph::getInstance().backward(final_node);
+            }
             model.update_parameters(learning_rate);
             
             // Track accuracy

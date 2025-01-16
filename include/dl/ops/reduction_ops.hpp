@@ -2,79 +2,25 @@
 
 #include "../tensor.hpp"       // for Tensor<T>
 #include "../autograd.hpp"     // for Node, ComputationGraph, etc.
-#include "../utils/utils.hpp"  // or wherever you keep other necessary utils
+#include "../utils/utils.hpp"  // shape_to_string, etc.
+#include "../utils/index_utils.hpp"  // computeStrides, unravelIndex, ravelIndex
 #include <memory>
 #include <vector>
 #include <numeric>
 #include <algorithm>
 #include <limits>
+#include <iostream> // optional for debug prints
 
 namespace dl {
 namespace ops {
 
 ///////////////////////////////////////////////////////////
-// (1) Utility functions for multi-dimensional index handling
+// (1) SumNode
 ///////////////////////////////////////////////////////////
-
-// If you'd prefer to keep them in a separate file (e.g., index_utils.hpp),
-// you can remove them here. But included for completeness:
-
-inline std::vector<size_t> computeStrides(const std::vector<size_t>& shape) {
-    // Row-major stride calculation
-    std::vector<size_t> strides(shape.size(), 1);
-    for (int i = static_cast<int>(shape.size()) - 2; i >= 0; --i) {
-        strides[i] = strides[i + 1] * shape[i + 1];
-    }
-    return strides;
-}
-
-inline std::vector<size_t> unravelIndex(size_t idx, const std::vector<size_t>& shape) {
-    // Convert a flattened index into multi-dimensional coordinates
-    std::vector<size_t> coords(shape.size());
-    for (size_t i = 0; i < shape.size(); ++i) {
-        size_t s = 1;
-        for (size_t j = i + 1; j < shape.size(); ++j) {
-            s *= shape[j];
-        }
-        coords[i] = (idx / s) % shape[i];
-    }
-    return coords;
-}
-
-inline size_t ravelIndex(const std::vector<size_t>& coords, const std::vector<size_t>& strides) {
-    // Convert multi-dimensional coordinates into a flattened index
-    // using the provided row-major strides
-    size_t idx = 0;
-    for (size_t i = 0; i < coords.size(); ++i) {
-        idx += coords[i] * strides[i];
-    }
-    return idx;
-}
-
-// A numerically stable accumulate (Kahan summation)
 template<typename T>
-inline T stable_accumulate(const std::vector<T>& values) {
-    T sum = 0;
-    T c = 0; // Compensation for lost low bits
-    for (T v : values) {
-        T y = v - c;
-        T t = sum + y;
-        c = (t - sum) - y;
-        sum = t;
-    }
-    return sum;
-}
-
-///////////////////////////////////////////////////////////
-// (2) Node Classes for Reduction Ops
-///////////////////////////////////////////////////////////
-
-/**
- * SumNode:
- *  - Sums values across a specified dimension (or all dims if dim = -1).
- */
-template<typename T>
-class SumNode : public Node {
+class SumNode 
+    : public Node
+    , public std::enable_shared_from_this<SumNode<T>> {
 public:
     SumNode(const Tensor<T>& input, int dim, Tensor<T>& output)
         : input_impl_(input.impl_)
@@ -83,10 +29,24 @@ public:
         , dim_(dim)
     {
         output_shape_ = output.shape();
+
+        // -- DAG Linking --
+        // 1) The output is produced by *this* node
+        output.setGradFn(this->shared_from_this());
+
+        // 2) If the input has a gradFn, link it as a parent
+        if (auto parent = (*input).gradFn().lock()) {
+            parents_.push_back(parent);
+            parent->children_.push_back(this->shared_from_this());
+        }
+
+        // 3) Register this node in the ComputationGraph
+        ComputationGraph::getInstance().addNode(this->shared_from_this());
     }
 
     std::string node_type() const override { return "Sum"; }
 
+    // The backward pass is unchanged
     void backward() override {
         if (!input_impl_->requires_grad()) return;
 
@@ -108,10 +68,8 @@ public:
         auto out_strides = computeStrides(output_shape_);
 
         for (size_t i = 0; i < input_grad.size(); ++i) {
-            // unravel the input index
             auto coords = unravelIndex(i, input_shape_);
-            // collapsed dimension => coords[dim_] = 0 in output
-            coords[dim_] = 0;
+            coords[dim_] = 0; // collapsed dimension => coords[dim_] = 0
             size_t out_idx = ravelIndex(coords, out_strides);
             input_grad[i] += output_grad[out_idx];
         }
@@ -125,12 +83,13 @@ private:
     int dim_;
 };
 
-/**
- * MeanNode:
- *  - Takes the mean across a specified dimension (or all dims if dim = -1).
- */
+///////////////////////////////////////////////////////////
+// (2) MeanNode
+///////////////////////////////////////////////////////////
 template<typename T>
-class MeanNode : public Node {
+class MeanNode 
+    : public Node
+    , public std::enable_shared_from_this<MeanNode<T>> {
 public:
     MeanNode(const Tensor<T>& input, int dim, Tensor<T>& output)
         : input_impl_(input.impl_)
@@ -147,9 +106,21 @@ public:
         } else {
             num_reduced_ = input_shape_[dim_];
         }
-
         output_shape_ = output.shape();
         scale_ = T(1) / static_cast<T>(num_reduced_);
+
+        // -- DAG Linking --
+        // 1) output is produced by *this* MeanNode
+        output.setGradFn(this->shared_from_this());
+
+        // 2) Link input as parent if it has a gradFn
+        if (auto parent = input.gradFn().lock()) {
+            parents_.push_back(parent);
+            parent->children_.push_back(this->shared_from_this());
+        }
+
+        // 3) Register with ComputationGraph
+        ComputationGraph::getInstance().addNode(this->shared_from_this());
     }
 
     std::string node_type() const override { return "Mean"; }
@@ -161,7 +132,7 @@ public:
         const auto& output_grad = output_impl_->grad();
 
         if (dim_ == -1) {
-            // All dims => single scalar
+            // all dims => single scalar
             T gval = output_grad[0] * scale_;
             for (size_t i = 0; i < input_grad.size(); ++i) {
                 input_grad[i] += gval;
@@ -169,13 +140,13 @@ public:
             return;
         }
 
-        // Partial dimension
+        // partial dimension
         auto in_strides = computeStrides(input_shape_);
         auto out_strides = computeStrides(output_shape_);
 
         for (size_t i = 0; i < input_grad.size(); ++i) {
             auto coords = unravelIndex(i, input_shape_);
-            coords[dim_] = 0; // collapsed dimension index
+            coords[dim_] = 0; 
             size_t out_idx = ravelIndex(coords, out_strides);
             input_grad[i] += output_grad[out_idx] * scale_;
         }
@@ -191,13 +162,13 @@ private:
     T scale_;
 };
 
-/**
- * MaxNode:
- *  - Takes max across a dimension (or all dims), storing the index of the max
- *    for each slice to properly backprop only to max elements.
- */
+///////////////////////////////////////////////////////////
+// (3) MaxNode
+///////////////////////////////////////////////////////////
 template<typename T>
-class MaxNode : public Node {
+class MaxNode 
+    : public Node
+    , public std::enable_shared_from_this<MaxNode<T>> {
 public:
     MaxNode(const Tensor<T>& input, int dim, Tensor<T>& output)
         : input_impl_(input.impl_)
@@ -240,7 +211,7 @@ public:
                 T max_val = std::numeric_limits<T>::lowest();
                 size_t max_pos = 0;
 
-                // Vary the coordinate along dim_ from 0..(input_shape_[dim_]-1)
+                // find max along dim_
                 for (size_t pos = 0; pos < input_shape_[dim_]; ++pos) {
                     coords[dim_] = pos;
                     size_t in_idx = ravelIndex(coords, in_strides);
@@ -253,6 +224,16 @@ public:
                 max_indices_[out_idx] = max_pos;
             }
         }
+
+        // -- DAG Linking --
+        output.setGradFn(this->shared_from_this());
+
+        if (auto parent = input.gradFn().lock()) {
+            parents_.push_back(parent);
+            parent->children_.push_back(this->shared_from_this());
+        }
+
+        ComputationGraph::getInstance().addNode(this->shared_from_this());
     }
 
     std::string node_type() const override { return "Max"; }
@@ -278,12 +259,13 @@ private:
     std::vector<size_t> max_indices_;
 };
 
-/**
- * MinNode:
- *  - Similar to MaxNode, but picks the minimum value. 
- */
+///////////////////////////////////////////////////////////
+// (4) MinNode
+///////////////////////////////////////////////////////////
 template<typename T>
-class MinNode : public Node {
+class MinNode 
+    : public Node
+    , public std::enable_shared_from_this<MinNode<T>> {
 public:
     MinNode(const Tensor<T>& input, int dim, Tensor<T>& output)
         : input_impl_(input.impl_)
@@ -326,7 +308,7 @@ public:
                 T min_val = std::numeric_limits<T>::max();
                 size_t min_pos = 0;
 
-                // Vary the coordinate along dim_
+                // find min along dim_
                 for (size_t pos = 0; pos < input_shape_[dim_]; ++pos) {
                     coords[dim_] = pos;
                     size_t in_idx = ravelIndex(coords, in_strides);
@@ -339,6 +321,16 @@ public:
                 min_indices_[out_idx] = min_pos;
             }
         }
+
+        // -- DAG Linking --
+        output.setGradFn(this->shared_from_this());
+
+        if (auto parent = input.gradFn().lock()) {
+            parents_.push_back(parent);
+            parent->children_.push_back(this->shared_from_this());
+        }
+
+        ComputationGraph::getInstance().addNode(this->shared_from_this());
     }
 
     std::string node_type() const override { return "Min"; }
@@ -364,15 +356,13 @@ private:
     std::vector<size_t> min_indices_;
 };
 
-/**
- * ProdNode:
- *  - Product of elements along a dimension (or all dims).
- *  - For backward pass, we need to multiply out everything except the item
- *    whose gradient we are computing (like in typical "product rule of logs").
- *    We'll store partial products or use logs for stability if desired.
- */
+///////////////////////////////////////////////////////////
+// (5) ProdNode
+///////////////////////////////////////////////////////////
 template<typename T>
-class ProdNode : public Node {
+class ProdNode 
+    : public Node
+    , public std::enable_shared_from_this<ProdNode<T>> {
 public:
     ProdNode(const Tensor<T>& input, int dim, Tensor<T>& output)
         : input_impl_(input.impl_)
@@ -394,6 +384,7 @@ public:
             out_data.resize(1);
             out_data[0] = product;
         } else {
+            // partial dimension
             size_t out_size = 1;
             for (auto s : output_shape_) out_size *= s;
             out_data.resize(out_size);
@@ -401,9 +392,9 @@ public:
             auto in_strides = computeStrides(input_shape_);
             auto out_strides = computeStrides(output_shape_);
 
+            // compute product
             for (size_t out_idx = 0; out_idx < out_size; ++out_idx) {
                 auto coords = unravelIndex(out_idx, output_shape_);
-
                 T product = 1;
                 for (size_t pos = 0; pos < input_shape_[dim_]; ++pos) {
                     coords[dim_] = pos;
@@ -413,6 +404,16 @@ public:
                 out_data[out_idx] = product;
             }
         }
+
+        // -- DAG Linking --
+        output.setGradFn(this->shared_from_this());
+
+        if (auto parent = input.gradFn().lock()) {
+            parents_.push_back(parent);
+            parent->children_.push_back(this->shared_from_this());
+        }
+
+        ComputationGraph::getInstance().addNode(this->shared_from_this());
     }
 
     std::string node_type() const override { return "Prod"; }
@@ -420,28 +421,21 @@ public:
     void backward() override {
         if (!input_impl_->requires_grad()) return;
 
-        auto& in_grad = input_impl_->grad();
-        const auto& in_data = input_impl_->data();
+        auto& in_grad   = input_impl_->grad();
+        const auto& in_data  = input_impl_->data();
         const auto& out_data = output_impl_->data();
         const auto& out_grad = output_impl_->grad();
 
-        // For simplicity, do a partial re-run of the forward logic
-        // to get the product excluding the current element. 
-        // This is not the most efficient approach (we might store partial products).
-        // But it's straightforward.
-
+        // If dim == -1 => single scalar
         if (dim_ == -1) {
-            // single scalar
-            T product = out_data[0]; // The entire product
+            T product = out_data[0]; 
             for (size_t i = 0; i < in_data.size(); ++i) {
                 if (in_data[i] != 0) {
-                    // d/dx [product of all] = product / x
+                    // derivative = product / x
                     in_grad[i] += out_grad[0] * (product / in_data[i]);
                 }
                 else {
-                    // If in_data[i] == 0, you'd need a separate logic 
-                    // (the derivative is the product of all others).
-                    // We'll do a naive approach: re-multiply all except the current.
+                    // re-multiply all except the current
                     T partial = 1;
                     for (size_t j = 0; j < in_data.size(); ++j) {
                         if (j != i) {
@@ -451,22 +445,20 @@ public:
                     in_grad[i] += out_grad[0] * partial;
                 }
             }
-        } else {
+        } 
+        else {
             // partial dimension
-            auto in_strides = computeStrides(input_shape_);
+            auto in_strides  = computeStrides(input_shape_);
             auto out_strides = computeStrides(output_shape_);
-            size_t in_size = in_data.size();
+            size_t in_size   = in_data.size();
 
-            // For each input element, we see which slice it belongs to in the output
-            // Then re-multiply except that element.
             for (size_t i = 0; i < in_size; ++i) {
                 auto coords = unravelIndex(i, input_shape_);
-                // find the out_idx
                 size_t old_val = coords[dim_];
-                coords[dim_] = 0;
+                coords[dim_] = 0; 
                 size_t out_idx = ravelIndex(coords, out_strides);
 
-                T product_slice = out_data[out_idx]; // product for that entire slice
+                T product_slice = out_data[out_idx]; 
                 T gradient_contribution = 0;
 
                 if (in_data[i] != 0) {
@@ -475,7 +467,7 @@ public:
                     // re-compute product excluding current index
                     T partial = 1;
                     for (size_t pos = 0; pos < input_shape_[dim_]; ++pos) {
-                        if (pos == old_val) continue; // exclude the current
+                        if (pos == old_val) continue;
                         coords[dim_] = pos;
                         size_t other_in_idx = ravelIndex(coords, in_strides);
                         partial *= in_data[other_in_idx];
@@ -498,7 +490,7 @@ private:
 
 ///////////////////////////////////////////////////////////
 // (3) Free functions for creating reduction operations
-///////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////// 
 
 /**
  * sum(input, dim = -1)
@@ -515,17 +507,12 @@ Tensor<T> sum(const Tensor<T>& input, int dim = -1) {
         out_shape[dim] = 1; // reduce just one dim
     }
 
-    // Create output
+    // Create output Tensor
     Tensor<T> output(out_shape);
 
-    // Autograd
-    if (input.requires_grad()) {
-        output.set_requires_grad(true);
-        auto node = std::make_shared<SumNode<T>>(input, dim, output);
-        ComputationGraph::getInstance().add_node(node);
-    }
-
-    // Forward pass: stable summation
+    // --------------------------
+    // Forward Pass: stable summation
+    // --------------------------
     const auto& in_data = input.data();
     auto& out_data = output.data();
     out_data.clear();
@@ -533,21 +520,29 @@ Tensor<T> sum(const Tensor<T>& input, int dim = -1) {
     if (dim == -1) {
         // Single scalar
         out_data.resize(1);
-        out_data[0] = stable_accumulate(in_data);
+        T sum_val = T(0);
+        T c = T(0); // Kahan compensation
+        for (auto v : in_data) {
+            T y = v - c;
+            T t = sum_val + y;
+            c = (t - sum_val) - y;
+            sum_val = t;
+        }
+        out_data[0] = sum_val;
     } else {
         // Partial sum across dimension `dim`
         size_t out_size = 1;
         for (auto s : out_shape) out_size *= s;
         out_data.resize(out_size);
 
-        auto in_shape = input.shape();
-        auto in_strides = computeStrides(in_shape);
+        auto in_shape    = input.shape();
+        auto in_strides  = computeStrides(in_shape);
         auto out_strides = computeStrides(out_shape);
 
         for (size_t out_idx = 0; out_idx < out_size; ++out_idx) {
             auto coords = unravelIndex(out_idx, out_shape);
-            T sum_val = 0;
-            T c = 0; // Kahan compensation
+            T sum_val = T(0);
+            T c = T(0); // Kahan compensation
             for (size_t pos = 0; pos < in_shape[dim]; ++pos) {
                 coords[dim] = pos;
                 size_t in_idx = ravelIndex(coords, in_strides);
@@ -559,6 +554,17 @@ Tensor<T> sum(const Tensor<T>& input, int dim = -1) {
             out_data[out_idx] = sum_val;
         }
     }
+
+    // --------------------------
+    // Autograd: If input requires grad, build a SumNode
+    // --------------------------
+    if (input.requires_grad()) {
+        // We do *not* call addNode or set_requires_grad here.
+        // The SumNode constructor does DAG linkage.
+        auto node = std::make_shared<SumNode<T>>(input, dim, output);
+        // node constructor sets output's gradFn + adds itself to ComputationGraph
+    }
+
     return output;
 }
 
@@ -567,7 +573,7 @@ Tensor<T> sum(const Tensor<T>& input, int dim = -1) {
  */
 template<typename T>
 Tensor<T> mean(const Tensor<T>& input, int dim = -1) {
-    // output shape logic is the same as sum
+    // Output shape logic is the same as sum
     std::vector<size_t> out_shape = input.shape();
     if (dim == -1) {
         out_shape = {1};
@@ -577,17 +583,21 @@ Tensor<T> mean(const Tensor<T>& input, int dim = -1) {
 
     Tensor<T> output(out_shape);
 
+    // --------------------------
     // Autograd
+    // --------------------------
     if (input.requires_grad()) {
-        output.set_requires_grad(true);
+        // Let the MeanNode constructor handle DAG linking
         auto node = std::make_shared<MeanNode<T>>(input, dim, output);
-        ComputationGraph::getInstance().add_node(node);
     }
 
+    // --------------------------
     // Forward pass
     // 1) Summation
-    auto sum_tensor = sum(input, dim);
     // 2) Divide by number of elements along that dimension
+    // --------------------------
+    auto sum_tensor = sum(input, dim);
+
     size_t count = 1;
     if (dim == -1) {
         // all dims
@@ -612,7 +622,7 @@ Tensor<T> mean(const Tensor<T>& input, int dim = -1) {
  */
 template<typename T>
 Tensor<T> max(const Tensor<T>& input, int dim = -1) {
-    // output shape
+    // Determine output shape
     std::vector<size_t> out_shape = input.shape();
     if (dim == -1) {
         out_shape = {1};
@@ -622,18 +632,14 @@ Tensor<T> max(const Tensor<T>& input, int dim = -1) {
 
     Tensor<T> output(out_shape);
 
-    // Autograd
+    // If input requires grad => create a MaxNode
     if (input.requires_grad()) {
-        output.set_requires_grad(true);
         auto node = std::make_shared<MaxNode<T>>(input, dim, output);
-        ComputationGraph::getInstance().add_node(node);
     } else {
-        // If no grad is needed, we must still do the forward pass here
-        // (since in that case the node won't exist).
-        // Alternatively, you can keep the forward pass in the Node constructor.
-        // But let's do it the same as the Node for consistency.
+        // If no grad, do forward pass here
         const auto& in_data = input.data();
         auto& out_data = output.data();
+
         if (dim == -1) {
             // global max
             size_t max_idx = 0;
@@ -651,15 +657,14 @@ Tensor<T> max(const Tensor<T>& input, int dim = -1) {
             for (auto s : out_shape) out_size *= s;
             out_data.resize(out_size);
 
-            auto in_shape = input.shape();
-            auto in_strides = computeStrides(in_shape);
+            auto in_shape    = input.shape();
+            auto in_strides  = computeStrides(in_shape);
             auto out_strides = computeStrides(out_shape);
 
             for (size_t out_idx = 0; out_idx < out_size; ++out_idx) {
                 auto coords = unravelIndex(out_idx, out_shape);
 
                 T max_val = std::numeric_limits<T>::lowest();
-
                 for (size_t pos = 0; pos < in_shape[dim]; ++pos) {
                     coords[dim] = pos;
                     size_t in_idx = ravelIndex(coords, in_strides);
@@ -680,6 +685,7 @@ Tensor<T> max(const Tensor<T>& input, int dim = -1) {
  */
 template<typename T>
 Tensor<T> min(const Tensor<T>& input, int dim = -1) {
+    // Determine output shape
     std::vector<size_t> out_shape = input.shape();
     if (dim == -1) {
         out_shape = {1};
@@ -689,15 +695,14 @@ Tensor<T> min(const Tensor<T>& input, int dim = -1) {
 
     Tensor<T> output(out_shape);
 
-    // Autograd
+    // If input requires grad => create a MinNode
     if (input.requires_grad()) {
-        output.set_requires_grad(true);
         auto node = std::make_shared<MinNode<T>>(input, dim, output);
-        ComputationGraph::getInstance().add_node(node);
     } else {
-        // Forward pass if no grad
+        // If no grad, do forward pass
         const auto& in_data = input.data();
         auto& out_data = output.data();
+
         if (dim == -1) {
             // global min
             size_t min_idx = 0;
@@ -715,8 +720,8 @@ Tensor<T> min(const Tensor<T>& input, int dim = -1) {
             for (auto s : out_shape) out_size *= s;
             out_data.resize(out_size);
 
-            auto in_shape = input.shape();
-            auto in_strides = computeStrides(in_shape);
+            auto in_shape    = input.shape();
+            auto in_strides  = computeStrides(in_shape);
             auto out_strides = computeStrides(out_shape);
 
             for (size_t out_idx = 0; out_idx < out_size; ++out_idx) {
@@ -752,12 +757,11 @@ Tensor<T> prod(const Tensor<T>& input, int dim = -1) {
 
     Tensor<T> output(out_shape);
 
+    // If input requires grad => create a ProdNode
     if (input.requires_grad()) {
-        output.set_requires_grad(true);
         auto node = std::make_shared<ProdNode<T>>(input, dim, output);
-        ComputationGraph::getInstance().add_node(node);
     } else {
-        // Forward pass if no grad
+        // If no grad, do forward pass
         const auto& in_data = input.data();
         auto& out_data = output.data();
         if (dim == -1) {
@@ -773,13 +777,12 @@ Tensor<T> prod(const Tensor<T>& input, int dim = -1) {
             for (auto s : out_shape) out_size *= s;
             out_data.resize(out_size);
 
-            auto in_shape = input.shape();
-            auto in_strides = computeStrides(in_shape);
+            auto in_shape    = input.shape();
+            auto in_strides  = computeStrides(in_shape);
             auto out_strides = computeStrides(out_shape);
 
             for (size_t out_idx = 0; out_idx < out_size; ++out_idx) {
                 auto coords = unravelIndex(out_idx, out_shape);
-
                 T product = 1;
                 for (size_t pos = 0; pos < in_shape[dim]; ++pos) {
                     coords[dim] = pos;

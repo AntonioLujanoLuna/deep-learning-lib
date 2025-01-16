@@ -1,10 +1,7 @@
 #pragma once
 
-#include "../tensor.hpp"
-#include "../ops/matrix_ops.hpp"
-#include "../autograd.hpp"
-#include "../optim/optimizer.hpp"
-#include "../detail/tensor_impl.hpp"
+#include "dl/autograd.hpp"
+#include "dl/tensor.hpp"
 #include <random>
 #include <memory>
 #include <iostream>

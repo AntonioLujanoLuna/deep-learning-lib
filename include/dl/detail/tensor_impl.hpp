@@ -1,5 +1,6 @@
 #pragma once
 
+#include "dl/fwd.hpp"
 #include "tensor_error.hpp"
 #include <vector>
 #include <numeric>
@@ -77,6 +78,8 @@ public:
     size_t num_dimensions() const noexcept {
         return shape_.size();
     }
+
+    std::weak_ptr<Node> grad_fn_;
 
 private:
     Shape shape_;

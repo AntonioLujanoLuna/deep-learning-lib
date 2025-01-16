@@ -1,7 +1,6 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
-#include "dl/nn/linear.hpp"
-#include "dl/ops/loss.hpp"
+#include "dl/dl.hpp"
 #include <iostream>
 #include <memory>
 
@@ -46,7 +45,10 @@ TEST_CASE("Linear layer operations") {
         // Initialize loss gradient
         loss->grad().assign(1, 1.0f);
         
-        dl::ComputationGraph::getInstance().backward();
+        if (auto finalNode = (*loss).gradFn().lock())
+        {
+            dl::ComputationGraph::getInstance().backward(finalNode);
+        }        
         dl::ComputationGraph::getInstance().clear();
         
         // Check that gradients are computed
@@ -109,8 +111,10 @@ TEST_CASE("Linear layer forward and backward") {
     loss->grad().assign(1, 1.0f);
     
     // Backward pass
-    dl::ComputationGraph::getInstance().backward();
-    
+    if (auto finalNode = (*loss).gradFn().lock())
+    {
+        dl::ComputationGraph::getInstance().backward(finalNode);
+    }
     // Check gradients
     const auto& weight_grad = weights.grad();
     const auto& bias_grad = bias.grad();
@@ -164,8 +168,10 @@ TEST_CASE("Linear layer with batch processing") {
     loss->grad().assign(1, 1.0f);
     
     // Backward pass
-    dl::ComputationGraph::getInstance().backward();
-    
+    if (auto finalNode = (*loss).gradFn().lock())
+    {
+        dl::ComputationGraph::getInstance().backward(finalNode);
+    }    
     // Check gradients
     const auto& weight_grad = weights.grad();
     const auto& bias_grad = bias.grad();
@@ -220,7 +226,10 @@ TEST_CASE("Linear layer backward pass computes correct gradients") {
     loss->grad().assign(1, 1.0f);
     
     // Backward pass through computation graph
-    dl::ComputationGraph::getInstance().backward();
+    if (auto finalNode = (*loss).gradFn().lock())
+    {
+        dl::ComputationGraph::getInstance().backward(finalNode);
+    }
     
     // Check input gradients
     const auto& input_grad = input.grad();
@@ -235,8 +244,10 @@ TEST_CASE("Linear layer backward pass computes correct gradients") {
     output2->set_requires_grad(true);
     output2->grad().assign(output2->data().size(), 1.0f);
     
-    dl::ComputationGraph::getInstance().backward();
-    
+    if (auto finalNode = (*output2).gradFn().lock())
+    {
+        dl::ComputationGraph::getInstance().backward(finalNode);
+    }    
     const auto& input2_grad = input2.grad();
     REQUIRE(input2_grad.size() == 2);
 }

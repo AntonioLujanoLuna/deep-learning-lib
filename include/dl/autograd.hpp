@@ -1,20 +1,29 @@
+// File: C:\Users\aluja\Desktop\DL\include\dl\autograd.hpp
 #pragma once
 
+#include "dl/fwd.hpp"
 #include <memory>
+#include <unordered_set>
+#include <functional>
 #include <vector>
 #include <iostream>
 
 namespace dl {
 
-class Node {
+class Node : public std::enable_shared_from_this<Node> {
 public:
     virtual ~Node() = default;
     virtual void backward() = 0;
-    virtual std::string node_type() const = 0;  // Add this to identify node types
+    virtual std::string node_type() const = 0;  
+    
+    // DAG structure
+    std::vector<std::weak_ptr<Node>> parents_;
+    std::vector<std::weak_ptr<Node>> children_;
 };
 
 class ComputationGraph {
 public:
+    // Singleton accessor
     static ComputationGraph& getInstance() {
         static ComputationGraph instance;
         return instance;
@@ -34,21 +43,58 @@ public:
         nodes_.push_back(node);
     }
 
-    void backward() {
-        if (nodes_.empty()) {
-            std::cout << "No nodes in computation graph, skipping backward pass" << std::endl;
+    /**
+     * Backward pass using DAG-based topological order.
+     * @param final_node The final node (usually the loss node) from which to start the backward pass.
+     */
+    void backward(std::shared_ptr<Node> final_node) {
+        if (!final_node) {
+            std::cerr << "[Warning] Final node is null, skipping backward.\n";
             return;
         }
 
-        // Execute backward pass in reverse order
-        size_t node_idx = nodes_.size();
-        for (auto it = nodes_.rbegin(); it != nodes_.rend(); ++it, --node_idx) {
-            try {
-                (*it)->backward();
-            } catch (const std::exception& e) {
-                std::cerr << "Error in backward pass at " << (*it)->node_type() << " node " << node_idx << ": " << e.what() << std::endl;
-                throw;
+        // Set to track visited nodes to prevent revisiting
+        std::unordered_set<Node*> visited;
+        // Vector to store nodes in topological order
+        std::vector<std::shared_ptr<Node>> topo_order;
+
+        // Recursive DFS lambda to perform topological sorting
+        std::function<void(std::shared_ptr<Node>)> dfs = [&](std::shared_ptr<Node> current) {
+            if (!current) return;
+            if (visited.find(current.get()) != visited.end()) {
+                return;  // Node already visited
             }
+            visited.insert(current.get());
+
+            // Recursively visit all parent nodes
+            for (auto &weakParent : current->parents_) {
+                auto parent = weakParent.lock();
+                if (parent) {
+                    dfs(parent);
+                }
+            }
+
+            // After visiting parents, add the current node to topo_order
+            topo_order.push_back(current);
+        };
+
+        // Initiate DFS from the final_node
+        dfs(final_node);
+
+        // Perform backward pass in topological order
+        for (auto &node : topo_order) {
+            node->backward();
+        }
+    }
+
+    /**
+     * Optional: Existing no-argument backward method using reverse iteration.
+     * This can be kept for backward compatibility or removed if you prefer solely using the DAG-based approach.
+     */
+    void backward() {
+        // Reverse iterate over all nodes and call backward
+        for (auto it = nodes_.rbegin(); it != nodes_.rend(); ++it) {
+            (*it)->backward();
         }
     }
 
